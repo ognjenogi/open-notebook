@@ -26,7 +26,10 @@ from open_notebook.domain.credential import Credential
 router = APIRouter()
 
 DEFAULT_STT_MODEL = os.environ.get("OPEN_NOTEBOOK_STT_MODEL", "mimo-v2.6-pro")
-TIMEOUT_S = 30.0
+# 30 s matches the engine, but the gateway's transcription latency swings
+# between ~6 s and well over 30 s on the same clip, so the ceiling is tunable
+# rather than hard-wired.
+TIMEOUT_S = float(os.environ.get("OPEN_NOTEBOOK_STT_TIMEOUT_S", "60"))
 
 PROMPT = (
     "Transcribe this audio exactly. Reply with the transcript only, no "
@@ -81,8 +84,8 @@ async def transcribe(
     """Transcribe an audio file with Open Code Go.
 
     Mirrors POST /api/audio/transcribe in the learning engine: multipart
-    `file`, 30 s timeout, transcript-only answer, literal NO_SPEECH for
-    silence.
+    `file`, transcript-only answer, literal NO_SPEECH for silence. The
+    upstream timeout defaults to 60 s for the gateway's latency swings.
     """
     config = await _opencode_credential()
     if not config:

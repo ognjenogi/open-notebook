@@ -14,6 +14,9 @@ headers it had.
 import logging
 from typing import Dict, Optional
 
+import httpx
+from esperanto.utils.connect import HttpConnectionMixin
+
 logger = logging.getLogger(__name__)
 
 OPENCODE_HOST = "opencode.ai"
@@ -39,10 +42,19 @@ def opencode_headers(base_url: Optional[str]) -> Dict[str, str]:
 
 
 def install() -> None:
-    """Teach Esperanto's OpenAI-compatible clients about Open Code Go.
+    """Teach Esperanto's clients about Open Code Go.
 
-    Called once at import of open_notebook.ai.models, which is the funnel
-    every model instance is built through.
+    Two seams, because the notebook reaches a model two ways:
+
+    1. `_get_headers()` on the OpenAI-compatible classes — direct requests
+       (chat, embeddings, STT, model list).
+    2. `HttpConnectionMixin._create_http_clients` / `_create_langchain_http_clients`
+       — the LangChain `ChatOpenAI` the chat graph and the podcast builder go
+       through builds fresh httpx clients there, and those carry their own
+       default headers.
+
+    Called once at import of open_notebook.ai.models, the funnel every model
+    instance is built through.
     """
     from esperanto.providers.embedding.openai_compatible import (
         OpenAICompatibleEmbeddingModel,
@@ -73,3 +85,33 @@ def install() -> None:
         cls._get_headers = patched
         cls._opencode_headers_patched = True
         logger.debug("Open Code Go headers installed on %s", cls.__name__)
+
+    # httpx merges client default headers with per-request ones, and a
+    # per-request header wins, so nothing is duplicated for other providers.
+    if not getattr(HttpConnectionMixin, "_opencode_headers_patched", False):
+        def _headers_kwargs(self):
+            extra = opencode_headers(getattr(self, "base_url", None))
+            return {"headers": extra} if extra else {}
+
+        def direct_clients(self):
+            """Original contract: assigns self.client / self.async_client."""
+            base_url = getattr(self, "base_url", None)
+            if base_url:
+                self.base_url = base_url.rstrip("/")
+            kwargs = dict(timeout=self._get_timeout(), verify=self._get_ssl_verify())
+            kwargs.update(_headers_kwargs(self))
+            self.client = httpx.Client(**kwargs)
+            self.async_client = httpx.AsyncClient(**kwargs)
+
+        def langchain_clients(self):
+            """Original contract: returns a fresh (sync, async) pair, owned by
+            LangChain — this is the client the chat graph and podcast builder
+            actually send requests on."""
+            kwargs = dict(timeout=self._get_timeout(), verify=self._get_ssl_verify())
+            kwargs.update(_headers_kwargs(self))
+            return httpx.Client(**kwargs), httpx.AsyncClient(**kwargs)
+
+        HttpConnectionMixin._create_http_clients = direct_clients
+        HttpConnectionMixin._create_langchain_http_clients = langchain_clients
+        HttpConnectionMixin._opencode_headers_patched = True
+        logger.debug("Open Code Go headers installed on HttpConnectionMixin")

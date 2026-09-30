@@ -108,3 +108,38 @@ def test_transcribe_picks_the_audio_format_from_the_mime_type():
     assert _audio_format("audio/wav") == "wav"
     assert _audio_format("audio/ogg") == "ogg"
     assert _audio_format("") == "wav"
+
+
+def test_langchain_clients_carry_the_headers():
+    """The chat graph and podcast builder go through LangChain, whose
+    ChatOpenAI is built on the fresh clients from the connection mixin —
+    headers must be on those too, or chat alone misses them."""
+    import httpx
+    from esperanto.utils.connect import HttpConnectionMixin
+
+    install()
+    class Holder(HttpConnectionMixin):
+        def _get_provider_type(self):
+            return "openai"
+
+        def _get_timeout(self):
+            return 30
+
+        def _get_ssl_verify(self):
+            return True
+
+    holder = Holder()
+    holder.base_url = "https://opencode.ai/zen/v1"
+    sync_client, async_client = holder._create_langchain_http_clients()
+    try:
+        assert "x-opencode-session" in sync_client.headers
+        assert "x-opencode-session" in async_client.headers
+    finally:
+        sync_client.close()
+
+    holder.base_url = "https://openrouter.ai/api/v1"
+    sync_client, async_client = holder._create_langchain_http_clients()
+    try:
+        assert "x-opencode-session" not in sync_client.headers
+    finally:
+        sync_client.close()
