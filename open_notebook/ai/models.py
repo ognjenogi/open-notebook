@@ -17,6 +17,12 @@ from open_notebook.domain.base import ObjectModel, RecordModel
 from open_notebook.exceptions import ConfigurationError
 from open_notebook.utils.url_validation import validate_url
 
+# Open Code Go's gateway needs a browser User-Agent and a session header on
+# every request; this is the one funnel all model instances are built through.
+from open_notebook.ai.opencode_headers import install as _install_opencode_headers
+
+_install_opencode_headers()
+
 ModelType = Union[LanguageModel, EmbeddingModel, SpeechToTextModel, TextToSpeechModel]
 
 # Config keys from Credential.to_esperanto_config() that may carry a

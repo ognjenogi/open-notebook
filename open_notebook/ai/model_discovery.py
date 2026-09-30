@@ -15,6 +15,7 @@ from loguru import logger
 
 from open_notebook.ai.connection_tester import normalize_anthropic_compatible_base_url
 from open_notebook.ai.models import Model
+from open_notebook.ai.opencode_headers import opencode_headers
 from open_notebook.ai.provider_registry import PROVIDERS
 from open_notebook.database.repository import repo_query
 from open_notebook.domain.credential import Credential
@@ -693,6 +694,8 @@ async def discover_openai_compatible_models() -> List[DiscoveredModel]:
         headers = dict(target.headers)
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
+        # Open Code Go answers /models only for a browser-shaped request.
+        headers.update(opencode_headers(base_url))
 
         async with httpx.AsyncClient() as client:
             response = await client.get(

@@ -1,0 +1,110 @@
+"""Open Code Go header injection.
+
+The gateway refuses a library-shaped request, so every OpenAI-compatible
+client has to add a browser User-Agent and a session header when — and only
+when — it is talking to that host. These tests pin both halves: the extra
+headers go to Open Code Go, and everyone else keeps exactly what they had.
+"""
+
+import pytest
+
+from open_notebook.ai.opencode_headers import (
+    BROWSER_USER_AGENT,
+    SESSION_HEADER,
+    install,
+    is_opencode,
+    opencode_headers,
+)
+
+
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        ("https://opencode.ai/zen/v1", True),
+        ("https://OPENCODE.AI/zen/v1", True),
+        ("https://openrouter.ai/api/v1", False),
+        ("http://ollama:11434/v1", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_is_opencode(url, expected):
+    assert is_opencode(url) is expected
+
+
+def test_headers_only_for_opencode():
+    assert opencode_headers("https://opencode.ai/zen/v1") == {
+        "User-Agent": BROWSER_USER_AGENT,
+        SESSION_HEADER: "open-notebook",
+    }
+    assert opencode_headers("https://openrouter.ai/api/v1") == {}
+
+
+def test_install_adds_headers_to_openai_compatible_clients():
+    install()
+    from esperanto.providers.embedding.openai_compatible import (
+        OpenAICompatibleEmbeddingModel,
+    )
+    from esperanto.providers.llm.openai_compatible import (
+        OpenAICompatibleLanguageModel,
+    )
+    from esperanto.providers.stt.openai_compatible import (
+        OpenAICompatibleSpeechToTextModel,
+    )
+
+    for cls in (
+        OpenAICompatibleLanguageModel,
+        OpenAICompatibleEmbeddingModel,
+        OpenAICompatibleSpeechToTextModel,
+    ):
+        assert cls._opencode_headers_patched is True
+
+
+def test_patched_headers_respect_the_host():
+    install()
+    from esperanto.providers.llm.openai_compatible import (
+        OpenAICompatibleLanguageModel,
+    )
+
+    class Fake:
+        base_url = "https://opencode.ai/zen/v1"
+        api_key = "k"
+
+        def _original(self):
+            return {"Authorization": "Bearer k", "Content-Type": "application/json"}
+
+    # Rebuild the patched method against a stand-in with the original headers,
+    # so the assertion is about the patch and not about a live client.
+    patched = OpenAICompatibleLanguageModel._get_headers
+    fake = Fake()
+    fake._get_headers = lambda self: {"Authorization": "Bearer k"}
+    headers = patched(fake)
+    assert headers[SESSION_HEADER] == "open-notebook"
+    assert headers["User-Agent"] == BROWSER_USER_AGENT
+    assert headers["Authorization"] == "Bearer k"
+
+    fake.base_url = "https://openrouter.ai/api/v1"
+    headers = patched(fake)
+    assert SESSION_HEADER not in headers
+    assert "User-Agent" not in headers
+
+
+def test_install_is_idempotent():
+    install()
+    from esperanto.providers.llm.openai_compatible import (
+        OpenAICompatibleLanguageModel,
+    )
+
+    first = OpenAICompatibleLanguageModel._get_headers
+    install()
+    assert OpenAICompatibleLanguageModel._get_headers is first
+
+
+def test_transcribe_picks_the_audio_format_from_the_mime_type():
+    from api.routers.audio import _audio_format
+
+    assert _audio_format("audio/mpeg") == "mp3"
+    assert _audio_format("audio/webm") == "webm"
+    assert _audio_format("audio/wav") == "wav"
+    assert _audio_format("audio/ogg") == "ogg"
+    assert _audio_format("") == "wav"

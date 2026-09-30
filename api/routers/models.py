@@ -1,7 +1,10 @@
 import os
+import time
 import traceback
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
+import httpx
 from esperanto import AIFactory
 from fastapi import APIRouter, HTTPException, Query
 from loguru import logger
@@ -22,7 +25,10 @@ from open_notebook.ai.model_discovery import (
     sync_provider_models,
 )
 from open_notebook.ai.models import DefaultModels, Model
+from open_notebook.ai.opencode_headers import opencode_headers
+from open_notebook.database.repository import repo_query
 from open_notebook.domain.credential import Credential
+from open_notebook.utils.url_validation import prepare_pinned_http_target
 from open_notebook.exceptions import (
     InvalidInputError,
     NotFoundError,
@@ -524,6 +530,126 @@ async def get_provider_availability():
         raise HTTPException(
             status_code=500, detail=f"Error checking provider availability: {str(e)}"
         )
+
+
+class LiveModelItem(BaseModel):
+    """One model as offered by a provider RIGHT NOW."""
+
+    providerId: str
+    providerName: str
+    key: str
+    name: str
+
+
+class LiveModelsResponse(BaseModel):
+    models: List[LiveModelItem]
+    """True when the list came from the provider, False when it fell back to
+    the models already registered in the database."""
+    live: bool
+    fetchedAt: str
+
+
+# The provider list is small and the answer changes rarely; 15 minutes is the
+# same window the learning engine uses for its model picker.
+LIVE_MODELS_TTL_S = 900
+_live_models_cache: Dict[str, tuple] = {}
+
+
+def _live_cache_key(provider: str, base_url: str) -> str:
+    return f"{provider}:{base_url}"
+
+
+@router.get("/models/live", response_model=LiveModelsResponse)
+async def get_live_models(provider: str = "openai_compatible") -> LiveModelsResponse:
+    """Models the provider is offering right now, not the ones we remembered.
+
+    Every configured OpenAI-compatible credential is asked for its own model
+    list, exactly like the learning engine's provider picker. A gateway that
+    cannot be reached falls back to the models already registered for that
+    provider, so the picker degrades instead of emptying.
+    """
+    items: List[LiveModelItem] = []
+    all_live = True
+    now = time.time()
+
+    for cred in await Credential.get_by_provider(provider):
+        try:
+            config = cred.to_esperanto_config()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Could not read {provider} credential: {e}")
+            continue
+        base_url = str(config.get("base_url") or "").rstrip("/")
+        api_key = config.get("api_key")
+        if not base_url:
+            continue
+
+        cache_key = _live_cache_key(provider, base_url)
+        cached = _live_models_cache.get(cache_key)
+        if cached and now - cached[0] < LIVE_MODELS_TTL_S:
+            fetched = cached[1]
+        else:
+            fetched = []
+            try:
+                target = await prepare_pinned_http_target(
+                    f"{base_url}/models", provider
+                )
+                headers = dict(target.headers)
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
+                headers.update(opencode_headers(base_url))
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(
+                        target.url,
+                        headers=headers,
+                        timeout=30.0,
+                        extensions=target.extensions,
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                raw = (
+                    payload.get("data")
+                    or payload.get("models")
+                    or (payload if isinstance(payload, list) else [])
+                )
+                for entry in raw or []:
+                    key = entry.get("id") or entry.get("key")
+                    if not isinstance(key, str) or not key:
+                        continue
+                    if "embed" in key.lower():
+                        continue
+                    fetched.append({"key": key, "name": entry.get("name") or key})
+                fetched.sort(key=lambda m: m["name"])
+                if fetched:
+                    _live_models_cache[cache_key] = (now, fetched)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"Live model list from {base_url} failed: {e}")
+
+        if not fetched:
+            # Fall back to what we already have registered for this endpoint.
+            all_live = False
+            rows = await repo_query(
+                "SELECT name FROM model WHERE provider = $provider",
+                {"provider": provider},
+            )
+            registered = [r.get("name") for r in rows if r.get("name")]
+            fetched = [{"key": n, "name": n} for n in registered]
+
+        name = getattr(cred, "name", None) or provider
+        items.extend(
+            LiveModelItem(
+                providerId=name,
+                providerName=name,
+                key=m["key"],
+                name=m["name"],
+            )
+            for m in fetched
+        )
+
+    return LiveModelsResponse(
+        models=items,
+        live=all_live and bool(items),
+        fetchedAt=datetime.now(timezone.utc).isoformat(),
+    )
 
 
 # =============================================================================
