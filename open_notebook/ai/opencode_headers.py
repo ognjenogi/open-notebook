@@ -11,11 +11,16 @@ The patch is additive and idempotent — an unpatched host keeps exactly the
 headers it had.
 """
 
+import base64
 import logging
-from typing import Dict, Optional
+import uuid
+from typing import Any, Dict, Optional, Union
 
 import httpx
+from esperanto.common_types.stt import TranscriptionResponse
 from esperanto.utils.connect import HttpConnectionMixin
+
+from open_notebook.ai.stt import DEFAULT_STT_MODEL, transcription_payload
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +31,22 @@ BROWSER_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
+
+
+def _read_audio_b64_and_mime(model_instance, audio_file: Union[str, Any]) -> tuple[str, str]:
+    if isinstance(audio_file, str):
+        mime_type = model_instance._get_audio_mime_type(audio_file)
+        with open(audio_file, "rb") as f:
+            raw = f.read()
+    else:
+        filename = getattr(audio_file, "name", "audio.mp3")
+        mime_type = model_instance._get_audio_mime_type(filename)
+        if hasattr(audio_file, "seek"):
+            audio_file.seek(0)
+        raw = audio_file.read()
+        if isinstance(raw, str):
+            raw = raw.encode("utf-8")
+    return base64.b64encode(raw).decode("ascii"), mime_type
 
 
 def is_opencode(base_url: Optional[str]) -> bool:
@@ -85,6 +106,65 @@ def install() -> None:
         cls._get_headers = patched
         cls._opencode_headers_patched = True
         logger.debug("Open Code Go headers installed on %s", cls.__name__)
+
+    if not getattr(OpenAICompatibleSpeechToTextModel, "_opencode_stt_patched", False):
+        orig_transcribe = OpenAICompatibleSpeechToTextModel.transcribe
+        orig_atranscribe = OpenAICompatibleSpeechToTextModel.atranscribe
+
+        def patched_transcribe(self, audio_file, language=None, prompt=None):
+            if not is_opencode(getattr(self, "base_url", None)):
+                return orig_transcribe(self, audio_file, language=language, prompt=prompt)
+
+            b64, mime_type = _read_audio_b64_and_mime(self, audio_file)
+            headers = dict(self._get_headers())
+            headers["Content-Type"] = "application/json"
+            headers["x-opencode-session"] = uuid.uuid4().hex
+            chosen = self.get_model_name()
+            if not chosen or chosen == "whisper-1":
+                chosen = DEFAULT_STT_MODEL
+            payload = transcription_payload(b64, mime_type, chosen, prompt=prompt)
+            base = str(self.base_url).rstrip("/")
+            response = self.client.post(
+                f"{base}/chat/completions", headers=headers, json=payload
+            )
+            self._handle_error(response)
+            data = response.json()
+            text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+            return TranscriptionResponse(
+                text=text.strip(),
+                language=language,
+                model=chosen,
+            )
+
+        async def patched_atranscribe(self, audio_file, language=None, prompt=None):
+            if not is_opencode(getattr(self, "base_url", None)):
+                return await orig_atranscribe(self, audio_file, language=language, prompt=prompt)
+
+            b64, mime_type = _read_audio_b64_and_mime(self, audio_file)
+            headers = dict(self._get_headers())
+            headers["Content-Type"] = "application/json"
+            headers["x-opencode-session"] = uuid.uuid4().hex
+            chosen = self.get_model_name()
+            if not chosen or chosen == "whisper-1":
+                chosen = DEFAULT_STT_MODEL
+            payload = transcription_payload(b64, mime_type, chosen, prompt=prompt)
+            base = str(self.base_url).rstrip("/")
+            response = await self.async_client.post(
+                f"{base}/chat/completions", headers=headers, json=payload
+            )
+            self._handle_error(response)
+            data = response.json()
+            text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+            return TranscriptionResponse(
+                text=text.strip(),
+                language=language,
+                model=chosen,
+            )
+
+        OpenAICompatibleSpeechToTextModel.transcribe = patched_transcribe
+        OpenAICompatibleSpeechToTextModel.atranscribe = patched_atranscribe
+        OpenAICompatibleSpeechToTextModel._opencode_stt_patched = True
+        logger.debug("Open Code Go STT installed on OpenAICompatibleSpeechToTextModel")
 
     # httpx merges client default headers with per-request ones, and a
     # per-request header wins, so nothing is duplicated for other providers.

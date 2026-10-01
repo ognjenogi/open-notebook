@@ -167,13 +167,17 @@ export function CredentialItem({
                   <div className="flex flex-wrap gap-1">
                     {linkedModels.filter(m => m.type === type).map(model => {
                       const defaultSlot = defaultSlots[model.id]
+                      const credName = model.credential
+                        ? (allCredentials.find(c => c.id === model.credential)?.name || credential.name)
+                        : credential.name
+                      const label = credName ? `${credName} · ${model.name}` : model.name
                       return (
                         <Badge
                           key={model.id}
                           variant={defaultSlot ? 'default' : 'secondary'}
                           className="font-mono text-[11px] gap-1 pr-0.5 group/model"
                         >
-                          {model.name}
+                          <span>{label}</span>
                           {defaultSlot && <span className="ml-0.5 opacity-75">({defaultSlot})</span>}
                           <button
                             className="ml-0.5 opacity-0 group-hover/model:opacity-60 hover:!opacity-100 transition-opacity"

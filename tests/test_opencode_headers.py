@@ -143,3 +143,91 @@ def test_langchain_clients_carry_the_headers():
         assert "x-opencode-session" not in sync_client.headers
     finally:
         sync_client.close()
+
+
+def test_audio_format_accuracy():
+    from open_notebook.ai.stt import audio_format
+
+    assert audio_format("audio/mpeg") == "mp3"
+    assert audio_format("audio/mp3") == "mp3"
+    assert audio_format("audio/webm") == "webm"
+    assert audio_format("audio/wav") == "wav"
+    assert audio_format("audio/ogg") == "ogg"
+    assert audio_format("audio/flac") == "flac"
+    assert audio_format("audio/m4a") == "m4a"
+    assert audio_format("audio/mp4") == "m4a"
+    assert audio_format("unknown") == "wav"
+    assert audio_format("") == "wav"
+    assert audio_format(None) == "wav"
+
+
+def test_transcription_payload_builds_expected_input_audio():
+    from open_notebook.ai.stt import transcription_payload, PROMPT
+
+    b64_dummy = "AAAA"
+    payload = transcription_payload(b64_dummy, "audio/webm", "mimo-v2.6-pro")
+
+    assert payload["model"] == "mimo-v2.6-pro"
+    assert payload["max_tokens"] == 4000
+    assert len(payload["messages"]) == 1
+    msg = payload["messages"][0]
+    assert msg["role"] == "user"
+    assert len(msg["content"]) == 2
+    assert msg["content"][0] == {"type": "text", "text": PROMPT}
+    assert msg["content"][1] == {
+        "type": "input_audio",
+        "input_audio": {
+            "data": b64_dummy,
+            "format": "webm",
+        },
+    }
+
+
+def test_stt_monkeypatch_uses_chat_completions_for_opencode():
+    import io
+    import httpx
+    from esperanto.providers.stt.openai_compatible import OpenAICompatibleSpeechToTextModel
+
+    install()
+    posted_urls = []
+
+    def fake_post(url, headers=None, json=None, files=None, data=None):
+        posted_urls.append(url)
+        if "chat/completions" in url:
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": "Hello world"}}]},
+                request=httpx.Request("POST", url),
+            )
+        else:
+            return httpx.Response(
+                200,
+                json={"text": "Hello non-opencode"},
+                request=httpx.Request("POST", url),
+            )
+
+    model = OpenAICompatibleSpeechToTextModel(
+        model_name="mimo-v2.6-pro",
+        api_key="key",
+        base_url="https://opencode.ai/zen/v1",
+    )
+    model.client.post = fake_post
+
+    dummy_file = io.BytesIO(b"fake audio data")
+    dummy_file.name = "audio.wav"
+
+    res = model.transcribe(dummy_file)
+    assert res.text == "Hello world"
+    assert any("chat/completions" in u for u in posted_urls)
+
+    posted_urls.clear()
+    other_model = OpenAICompatibleSpeechToTextModel(
+        model_name="whisper-1",
+        api_key="key",
+        base_url="https://other.ai/v1",
+    )
+    other_model.client.post = fake_post
+    dummy_file.seek(0)
+    other_res = other_model.transcribe(dummy_file)
+    assert other_res.text == "Hello non-opencode"
+    assert any("audio/transcriptions" in u for u in posted_urls)

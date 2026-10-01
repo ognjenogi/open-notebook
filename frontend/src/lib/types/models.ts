@@ -37,6 +37,7 @@ export interface DiscoveredModel {
   provider: string
   model_type: 'language' | 'embedding' | 'text_to_speech' | 'speech_to_text'
   description?: string
+  credential?: string | null
 }
 
 export interface ProviderSyncResult {

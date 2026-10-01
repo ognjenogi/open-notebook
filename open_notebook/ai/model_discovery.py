@@ -36,6 +36,7 @@ class DiscoveredModel:
     provider: str
     model_type: str  # language, embedding, speech_to_text, text_to_speech
     description: Optional[str] = None
+    credential: Optional[str] = None
 
 
 # =============================================================================
@@ -657,36 +658,17 @@ async def discover_cohere_models() -> List[DiscoveredModel]:
     return discovered
 
 
-async def discover_openai_compatible_models() -> List[DiscoveredModel]:
-    """
-    Fetch available models from an OpenAI-compatible API endpoint.
-    Uses the configured base_url from the database or environment variable.
-    """
-    api_key = None
-    base_url = None
-
-    # Try to get config from Credential database first
-    try:
-        credentials = await Credential.get_by_provider("openai_compatible")
-        if credentials:
-            cred = credentials[0]
-            config = cred.to_esperanto_config()
-            api_key = config.get("api_key")
-            base_url = config.get("base_url", "").rstrip("/")
-    except Exception as e:
-        logger.warning(f"Failed to read openai_compatible config from Credential: {e}")
-
-    # Fall back to environment variables
-    if not api_key:
-        api_key = os.environ.get("OPENAI_COMPATIBLE_API_KEY")
+async def _fetch_openai_compatible_models(
+    base_url: str,
+    api_key: Optional[str] = None,
+    credential_id: Optional[str] = None,
+) -> List[DiscoveredModel]:
+    """Helper to query an OpenAI-compatible /models endpoint."""
+    models: List[DiscoveredModel] = []
+    base_url = base_url.rstrip("/")
     if not base_url:
-        base_url = os.environ.get("OPENAI_COMPATIBLE_BASE_URL", "").rstrip("/")
+        return models
 
-    if not base_url:
-        logger.warning("No base_url configured for openai_compatible provider")
-        return []
-
-    models = []
     try:
         target = await prepare_pinned_http_target(
             _models_endpoint(base_url), "openai_compatible"
@@ -707,7 +689,7 @@ async def discover_openai_compatible_models() -> List[DiscoveredModel]:
             response.raise_for_status()
             data = response.json()
 
-            for model in data.get("data", []):
+            for model in (data.get("data") or data.get("models") or []):
                 model_id = model.get("id", "")
                 if model_id:
                     # Classify based on model name patterns
@@ -717,14 +699,68 @@ async def discover_openai_compatible_models() -> List[DiscoveredModel]:
                             name=model_id,
                             provider="openai_compatible",
                             model_type=model_type,
+                            credential=credential_id,
                         )
                     )
     except httpx.HTTPStatusError as e:
-        logger.warning(f"Failed to discover openai_compatible models: HTTP {e.response.status_code}")
+        logger.warning(
+            f"Failed to discover openai_compatible models from {base_url}: HTTP {e.response.status_code}"
+        )
     except Exception as e:
-        logger.warning(f"Failed to discover openai_compatible models: {e}")
+        logger.warning(f"Failed to discover openai_compatible models from {base_url}: {e}")
 
     return models
+
+
+async def discover_openai_compatible_models() -> List[DiscoveredModel]:
+    """
+    Fetch available models from OpenAI-compatible API endpoints.
+    Iterates all configured credentials from the database, or falls back to
+    environment variables if no credentials are configured.
+    """
+    credentials = []
+    try:
+        credentials = await Credential.get_by_provider("openai_compatible")
+    except Exception as e:
+        logger.warning(f"Failed to read openai_compatible config from Credential: {e}")
+
+    models: List[DiscoveredModel] = []
+
+    if credentials:
+        for cred in credentials:
+            try:
+                config = cred.to_esperanto_config()
+                api_key = config.get("api_key")
+                base_url = config.get("base_url", "").rstrip("/")
+                if not base_url:
+                    logger.warning(
+                        f"No base_url configured for credential {cred.id} ({cred.name})"
+                    )
+                    continue
+                cred_id = str(cred.id) if cred.id else None
+                cred_models = await _fetch_openai_compatible_models(
+                    base_url=base_url,
+                    api_key=api_key,
+                    credential_id=cred_id,
+                )
+                models.extend(cred_models)
+            except Exception as e:
+                logger.warning(f"Failed to discover models for credential {cred.id}: {e}")
+        return models
+
+    # Fall back to environment variables for zero-credential case
+    api_key = os.environ.get("OPENAI_COMPATIBLE_API_KEY")
+    base_url = os.environ.get("OPENAI_COMPATIBLE_BASE_URL", "").rstrip("/")
+
+    if not base_url:
+        logger.warning("No base_url configured for openai_compatible provider")
+        return []
+
+    return await _fetch_openai_compatible_models(
+        base_url=base_url,
+        api_key=api_key,
+        credential_id=None,
+    )
 
 
 async def discover_anthropic_compatible_models() -> List[DiscoveredModel]:
@@ -935,25 +971,50 @@ async def sync_provider_models(
     # Batch fetch existing models to avoid N+1 query pattern
     try:
         existing_models = await repo_query(
-            "SELECT string::lowercase(name) as name, string::lowercase(type) as type FROM model "
+            "SELECT id, string::lowercase(name) as name, string::lowercase(type) as type, credential FROM model "
             "WHERE string::lowercase(provider) = $provider",
             {"provider": provider.lower()},
         )
-        # Create a set of (name, type) tuples for O(1) lookup
+        # Create sets/mappings for O(1) lookup
         existing_keys = set()
+        existing_by_legacy_key = {}
         for m in existing_models:
-            existing_keys.add((m.get("name", ""), m.get("type", "")))
+            cred_val = str(m.get("credential")) if m.get("credential") else None
+            existing_keys.add((m.get("name", ""), m.get("type", ""), cred_val))
+            legacy_key = (m.get("name", ""), m.get("type", ""))
+            if legacy_key not in existing_by_legacy_key:
+                existing_by_legacy_key[legacy_key] = m
     except Exception as e:
         logger.warning(f"Failed to fetch existing models for {provider}: {e}")
         existing_keys = set()
+        existing_by_legacy_key = {}
 
     for model in discovered:
-        model_key = (model.name.lower(), model.model_type.lower())
+        cred_str = str(model.credential) if model.credential else None
+        model_key = (model.name.lower(), model.model_type.lower(), cred_str)
+        legacy_key = (model.name.lower(), model.model_type.lower())
 
         # Check if model already exists using pre-fetched data
         if model_key in existing_keys:
             existing_count += 1
             continue
+
+        # If model exists with no credential recorded and now we have a credential, update it
+        if cred_str and legacy_key in existing_by_legacy_key:
+            legacy_rec = existing_by_legacy_key.get(legacy_key)
+            if legacy_rec and not legacy_rec.get("credential"):
+                try:
+                    mod_obj = await Model.get(str(legacy_rec["id"]))
+                    mod_obj.credential = model.credential
+                    await mod_obj.save()
+                    existing_keys.add(model_key)
+                    existing_count += 1
+                    logger.info(
+                        f"Updated existing model credential: {model.provider}/{model.name} -> {model.credential}"
+                    )
+                    continue
+                except Exception as e:
+                    logger.warning(f"Failed to update credential for model {model.name}: {e}")
 
         # Create new model
         try:
@@ -961,9 +1022,11 @@ async def sync_provider_models(
                 name=model.name,
                 provider=model.provider,
                 type=model.model_type,
+                credential=model.credential,
             )
             await new_model.save()
             new_count += 1
+            existing_keys.add(model_key)
             logger.info(f"Registered new model: {model.provider}/{model.name} ({model.model_type})")
         except Exception as e:
             logger.warning(f"Failed to register model {model.name}: {e}")

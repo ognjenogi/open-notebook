@@ -1,9 +1,17 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
 import { LoadingSpinner } from '@/components/common/LoadingSpinner'
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
+import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Key, ShieldAlert, AlertCircle } from 'lucide-react'
 import { useTranslation } from '@/lib/hooks/use-translation'
 import { useModels, useModelDefaults } from '@/lib/hooks/use-models'
@@ -22,6 +30,8 @@ import {
 
 export default function ApiKeysPage() {
   const { t } = useTranslation()
+  const [searchQuery, setSearchQuery] = useState('')
+  const [credentialFilter, setCredentialFilter] = useState('all')
 
   // Data
   const { data: credentials, isLoading: credentialsLoading } = useCredentials()
@@ -37,6 +47,19 @@ export default function ApiKeysPage() {
 
   const encryptionReady = credentialStatus?.encryption_configured ?? true
 
+  // Filter models by search query and credential
+  const filteredModels = useMemo(() => {
+    let result = models || []
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase()
+      result = result.filter(m => m.name.toLowerCase().includes(q))
+    }
+    if (credentialFilter !== 'all') {
+      result = result.filter(m => m.credential === credentialFilter)
+    }
+    return result
+  }, [models, searchQuery, credentialFilter])
+
   // Group credentials by provider
   const credentialsByProvider = useMemo(() => {
     const grouped: Record<string, Credential[]> = {}
@@ -45,12 +68,15 @@ export default function ApiKeysPage() {
     }
     if (credentials) {
       for (const cred of credentials) {
+        if (credentialFilter !== 'all' && cred.id !== credentialFilter) {
+          continue
+        }
         if (!grouped[cred.provider]) grouped[cred.provider] = []
         grouped[cred.provider].push(cred)
       }
     }
     return grouped
-  }, [credentials, providers])
+  }, [credentials, providers, credentialFilter])
 
   // Providers needing migration
   const providersToMigrate = useMemo(() => {
@@ -72,6 +98,23 @@ export default function ApiKeysPage() {
       return bHas - aHas
     })
   }, [providers, credentialsByProvider])
+
+  const visibleProviders = useMemo(() => {
+    if (credentialFilter === 'all' && !searchQuery.trim()) {
+      return sortedProviders
+    }
+    return sortedProviders.filter(provider => {
+      const creds = credentialsByProvider[provider.name] || []
+      const hasCreds = creds.length > 0
+      const hasMatchingModels = filteredModels.some(m =>
+        creds.some(c => c.id === m.credential) || (m.provider === provider.name && !m.credential)
+      )
+      if (credentialFilter !== 'all') {
+        return hasCreds
+      }
+      return hasMatchingModels || hasCreds
+    })
+  }, [sortedProviders, credentialsByProvider, filteredModels, credentialFilter, searchQuery])
 
   const isLoading = credentialsLoading || modelsLoading || defaultsLoading || providersLoading
 
@@ -119,6 +162,36 @@ export default function ApiKeysPage() {
             <DefaultModelSelectors models={models} defaults={defaults} />
           )}
 
+          {/* Filter Controls */}
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex-1">
+              <Input
+                placeholder="Search models…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full"
+              />
+            </div>
+            <div className="w-full sm:w-[240px]">
+              <Select
+                value={credentialFilter}
+                onValueChange={setCredentialFilter}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="All Credentials" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  {(credentials || []).map((cred) => (
+                    <SelectItem key={cred.id} value={cred.id}>
+                      {cred.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
           {/* Provider Cards */}
           {providersError ? (
             <Alert variant="destructive">
@@ -128,12 +201,12 @@ export default function ApiKeysPage() {
             </Alert>
           ) : (
             <div className="grid gap-4">
-              {sortedProviders.map(provider => (
+              {visibleProviders.map(provider => (
                 <ProviderSection
                   key={provider.name}
                   provider={provider}
                   credentials={credentialsByProvider[provider.name] || []}
-                  models={models || []}
+                  models={filteredModels}
                   defaults={defaults || null}
                   allCredentials={credentials || []}
                   encryptionReady={encryptionReady}

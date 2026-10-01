@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/dialog'
 import { Settings2, Sparkles } from 'lucide-react'
 import { useModelDefaults, useModels } from '@/lib/hooks/use-models'
+import { useCredentials } from '@/lib/hooks/use-credentials'
 import { useTranslation } from '@/lib/hooks/use-translation'
 import { LoadingSpinner } from '@/components/common/LoadingSpinner'
 
@@ -38,8 +39,18 @@ export function ModelSelector({
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [selectedModel, setSelectedModel] = useState(currentModel || 'default')
-  const { data: models, isLoading } = useModels()
+  const { data: models, isLoading: modelsLoading } = useModels()
+  const { data: credentials, isLoading: credentialsLoading } = useCredentials()
+  const isLoading = modelsLoading || credentialsLoading
   const { data: defaults } = useModelDefaults()
+
+  const credMap = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const c of credentials || []) {
+      map.set(c.id, c.name)
+    }
+    return map
+  }, [credentials])
 
   useEffect(() => {
     setSelectedModel(currentModel || 'default')
@@ -62,13 +73,19 @@ export function ModelSelector({
 
   const currentModelName = useMemo(() => {
     if (currentModel) {
-      return languageModels.find(model => model.id === currentModel)?.name || currentModel
+      const m = languageModels.find(model => model.id === currentModel)
+      if (m) {
+        const credName = m.credential ? credMap.get(m.credential) : m.provider
+        return credName ? `${credName} · ${m.name}` : m.name
+      }
+      return currentModel
     }
     if (defaultModel) {
-      return defaultModel.name
+      const credName = defaultModel.credential ? credMap.get(defaultModel.credential) : defaultModel.provider
+      return credName ? `${credName} · ${defaultModel.name}` : defaultModel.name
     }
     return t('common.default')
-  }, [currentModel, languageModels, defaultModel, t('common.default')])
+  }, [currentModel, languageModels, defaultModel, credMap, t])
 
   const handleSave = () => {
     onModelChange(selectedModel === 'default' ? undefined : selectedModel)
@@ -118,14 +135,13 @@ export function ModelSelector({
                   <div className="flex items-center justify-between w-full">
                     <span>
                       {defaultModel 
-                        ? `${t('common.default')} (${defaultModel.name})` 
+                        ? (() => {
+                            const credName = defaultModel.credential ? credMap.get(defaultModel.credential) : defaultModel.provider
+                            const label = credName ? `${credName} · ${defaultModel.name}` : defaultModel.name
+                            return `${t('common.default')} (${label})`
+                          })()
                         : t('transformations.systemDefault')}
                     </span>
-                    {defaultModel?.provider && (
-                      <span className="text-xs text-muted-foreground ml-2">
-                        {defaultModel.provider}
-                      </span>
-                    )}
                   </div>
                 </SelectItem>
                 {isLoading ? (
@@ -133,16 +149,17 @@ export function ModelSelector({
                     <LoadingSpinner size="sm" />
                   </div>
                 ) : (
-                  languageModels.map((model) => (
-                    <SelectItem key={model.id} value={model.id}>
-                      <div className="flex items-center justify-between w-full">
-                        <span>{model.name}</span>
-                        <span className="text-xs text-muted-foreground ml-2">
-                          {model.provider}
-                        </span>
-                      </div>
-                    </SelectItem>
-                  ))
+                  languageModels.map((model) => {
+                    const credName = model.credential ? credMap.get(model.credential) : model.provider
+                    const optionLabel = credName ? `${credName} · ${model.name}` : model.name
+                    return (
+                      <SelectItem key={model.id} value={model.id}>
+                        <div className="flex items-center justify-between w-full">
+                          <span>{optionLabel}</span>
+                        </div>
+                      </SelectItem>
+                    )
+                  })
                 )}
               </SelectContent>
             </Select>

@@ -1,7 +1,8 @@
-import { useId } from 'react'
+import { useId, useMemo } from 'react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import { useModels } from '@/lib/hooks/use-models'
+import { useCredentials } from '@/lib/hooks/use-credentials'
 import { LoadingSpinner } from '@/components/common/LoadingSpinner'
 import { useTranslation } from '@/lib/hooks/use-translation'
 
@@ -27,9 +28,19 @@ export function ModelSelector({
   disabled = false
 }: ModelSelectorProps) {
   const { t } = useTranslation()
-  const { data: models, isLoading } = useModels()
+  const { data: models, isLoading: modelsLoading } = useModels()
+  const { data: credentials, isLoading: credentialsLoading } = useCredentials()
+  const isLoading = modelsLoading || credentialsLoading
   const derivedId = useId()
   const selectId = id || derivedId
+
+  const credMap = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const c of credentials || []) {
+      map.set(c.id, c.name)
+    }
+    return map
+  }, [credentials])
 
   // Filter models by type
   const filteredModels = models?.filter(model => model.type === modelType) || []
@@ -50,14 +61,17 @@ export function ModelSelector({
               {t('common.noResults')}
             </div>
           ) : (
-            filteredModels.map((model) => (
-              <SelectItem key={model.id} value={model.id}>
-                <div className="flex items-center justify-between w-full">
-                  <span>{model.name}</span>
-                  <span className="text-xs text-muted-foreground ml-2">{model.provider}</span>
-                </div>
-              </SelectItem>
-            ))
+            filteredModels.map((model) => {
+              const credName = model.credential ? credMap.get(model.credential) : model.provider
+              const optionLabel = credName ? `${credName} · ${model.name}` : model.name
+              return (
+                <SelectItem key={model.id} value={model.id}>
+                  <div className="flex items-center justify-between w-full">
+                    <span>{optionLabel}</span>
+                  </div>
+                </SelectItem>
+              )
+            })
           )}
         </SelectContent>
       </Select>

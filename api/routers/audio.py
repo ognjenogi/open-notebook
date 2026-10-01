@@ -21,40 +21,28 @@ from loguru import logger
 from pydantic import BaseModel
 
 from open_notebook.ai.opencode_headers import is_opencode, opencode_headers
+from open_notebook.ai.stt import (
+    DEFAULT_STT_MODEL,
+    PROMPT,
+    audio_format,
+    transcription_payload,
+)
 from open_notebook.domain.credential import Credential
 
 router = APIRouter()
 
-DEFAULT_STT_MODEL = os.environ.get("OPEN_NOTEBOOK_STT_MODEL", "mimo-v2.6-pro")
 # 30 s matches the engine, but the gateway's transcription latency swings
 # between ~6 s and well over 30 s on the same clip, so the ceiling is tunable
 # rather than hard-wired.
 TIMEOUT_S = float(os.environ.get("OPEN_NOTEBOOK_STT_TIMEOUT_S", "60"))
 
-PROMPT = (
-    "Transcribe this audio exactly. Reply with the transcript only, no "
-    "commentary. If there is no speech, reply exactly: NO_SPEECH."
-)
+# Backward-compatibility alias
+_audio_format = audio_format
 
 
 class TranscribeResponse(BaseModel):
     text: str
     model: str
-
-
-def _audio_format(mime: str) -> str:
-    mime = (mime or "").lower()
-    if "mpeg" in mime or "mp3" in mime:
-        return "mp3"
-    if "webm" in mime:
-        return "webm"
-    if "ogg" in mime:
-        return "ogg"
-    if "flac" in mime:
-        return "flac"
-    if "m4a" in mime or "mp4" in mime:
-        return "m4a"
-    return "wav"
 
 
 async def _opencode_credential() -> Optional[dict]:
@@ -109,25 +97,7 @@ async def transcribe(
     # A fresh session id per request: the gateway rejects a reused one.
     headers["x-opencode-session"] = uuid.uuid4().hex
 
-    payload = {
-        "model": chosen,
-        "max_tokens": 4000,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": PROMPT},
-                    {
-                        "type": "input_audio",
-                        "input_audio": {
-                            "data": audio,
-                            "format": _audio_format(file.content_type or ""),
-                        },
-                    },
-                ],
-            }
-        ],
-    }
+    payload = transcription_payload(audio, file.content_type or "", chosen)
 
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:

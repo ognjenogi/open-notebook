@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -37,23 +37,51 @@ export function ProviderSection({
 }: ProviderSectionProps) {
   const { t } = useTranslation()
   const [addOpen, setAddOpen] = useState(false)
+  const credList = allCredentials || []
 
   const displayName = provider.display_name || provider.name
   const modalities = provider.modalities.length > 0 ? provider.modalities : ['language']
   const hasCredentials = credentials.length > 0
 
-  // Models linked to any credential of this provider
-  const providerModels = models.filter(m =>
-    credentials.some(c => c.id === m.credential)
-  )
+  // Group models by credential ?? provider
+  const providerModels = useMemo(() => {
+    return models.filter(m => {
+      const groupKey = m.credential ?? m.provider
+      if (hasCredentials) {
+        return credentials.some(c => c.id === groupKey || c.id === m.credential)
+      }
+      return groupKey === provider.name
+    })
+  }, [models, credentials, hasCredentials, provider.name])
+
   const activeTypes = new Set<string>(providerModels.map(m => m.type))
+
+  // Section title & subtitle
+  // When credentials exist, label with credential name; openai_compatible can be a secondary subtitle
+  const credentialName = credentials.length === 1
+    ? credentials[0].name
+    : credentials.length > 1
+      ? credentials.map(c => c.name).join(' · ')
+      : null
+
+  const headerTitle = credentialName || displayName
+  const headerSubtitle = (hasCredentials && provider.name === 'openai_compatible')
+    ? 'openai_compatible'
+    : (credentials.length === 1 && credentialName !== displayName ? displayName : null)
 
   return (
     <Card className={hasCredentials ? 'border-l-2 border-l-fern' : undefined}>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3 flex-wrap">
-            <CardTitle className={`text-lg capitalize ${hasCredentials ? '' : 'text-muted-foreground'}`}>{displayName}</CardTitle>
+            <div>
+              <CardTitle className={`text-lg capitalize ${hasCredentials ? '' : 'text-muted-foreground'}`}>
+                {headerTitle}
+              </CardTitle>
+              {headerSubtitle && (
+                <p className="text-xs text-muted-foreground">{headerSubtitle}</p>
+              )}
+            </div>
             <div className="flex items-center gap-1">
               {modalities.map((type) => (
                 <Badge
@@ -83,15 +111,18 @@ export function ProviderSection({
         </div>
       </CardHeader>
       <CardContent className="space-y-2">
-        {credentials.map(cred => (
-          <CredentialItem
-            key={cred.id}
-            credential={cred}
-            models={models}
-            defaults={defaults}
-            allCredentials={allCredentials}
-          />
-        ))}
+        {credentials.map(cred => {
+          const credModels = models.filter(m => (m.credential ?? m.provider) === cred.id || m.credential === cred.id)
+          return (
+            <CredentialItem
+              key={cred.id}
+              credential={cred}
+              models={credModels}
+              defaults={defaults}
+              allCredentials={credList}
+            />
+          )
+        })}
 
         <Button
           variant="outline"
