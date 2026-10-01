@@ -55,52 +55,83 @@ export default function NotebooksPage() {
     <AppShell>
       <div className="flex-1 overflow-y-auto">
         <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <h1 className="font-display text-2xl font-bold tracking-tight">{t('notebooks.title')}</h1>
-            <Button variant="outline" size="sm" onClick={() => refetch()}>
-              <RefreshCw className="h-4 w-4" />
-            </Button>
-          </div>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-            <div className="flex items-center rounded-md border p-0.5">
-              <Button
-                variant={viewMode === 'tile' ? 'secondary' : 'ghost'}
-                size="sm"
-                onClick={() => setViewMode('tile')}
-                aria-label={t('notebooks.tileView')}
-                aria-pressed={viewMode === 'tile'}
-                title={t('notebooks.tileView')}
-              >
-                <LayoutGrid className="h-4 w-4" />
-              </Button>
-              <Button
-                variant={viewMode === 'list' ? 'secondary' : 'ghost'}
-                size="sm"
-                onClick={() => setViewMode('list')}
-                aria-label={t('notebooks.listView')}
-                aria-pressed={viewMode === 'list'}
-                title={t('notebooks.listView')}
-              >
-                <List className="h-4 w-4" />
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center justify-between sm:justify-start gap-3">
+              <div className="flex items-center gap-3">
+                <h1 className="font-display text-xl sm:text-2xl font-bold tracking-tight">{t('notebooks.title')}</h1>
+                <Button variant="outline" size="sm" onClick={() => refetch()} aria-label="Refresh">
+                  <RefreshCw className="h-4 w-4" />
+                </Button>
+              </div>
+              {/* Mobile view mode switcher */}
+              <div className="flex items-center rounded-md border p-0.5 sm:hidden">
+                <Button
+                  variant={viewMode === 'tile' ? 'secondary' : 'ghost'}
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  onClick={() => setViewMode('tile')}
+                  aria-label={t('notebooks.tileView')}
+                  aria-pressed={viewMode === 'tile'}
+                  title={t('notebooks.tileView')}
+                >
+                  <LayoutGrid className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant={viewMode === 'list' ? 'secondary' : 'ghost'}
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  onClick={() => setViewMode('list')}
+                  aria-label={t('notebooks.listView')}
+                  aria-pressed={viewMode === 'list'}
+                  title={t('notebooks.listView')}
+                >
+                  <List className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 sm:gap-3">
+              {/* Desktop view mode switcher */}
+              <div className="hidden sm:flex items-center rounded-md border p-0.5">
+                <Button
+                  variant={viewMode === 'tile' ? 'secondary' : 'ghost'}
+                  size="sm"
+                  onClick={() => setViewMode('tile')}
+                  aria-label={t('notebooks.tileView')}
+                  aria-pressed={viewMode === 'tile'}
+                  title={t('notebooks.tileView')}
+                >
+                  <LayoutGrid className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant={viewMode === 'list' ? 'secondary' : 'ghost'}
+                  size="sm"
+                  onClick={() => setViewMode('list')}
+                  aria-label={t('notebooks.listView')}
+                  aria-pressed={viewMode === 'list'}
+                  title={t('notebooks.listView')}
+                >
+                  <List className="h-4 w-4" />
+                </Button>
+              </div>
+
+              <Input
+                id="notebook-search"
+                name="notebook-search"
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder={t('notebooks.searchPlaceholder')}
+                autoComplete="off"
+                aria-label={t('common.accessibility.searchNotebooks') || "Search notebooks"}
+                className="flex-1 sm:w-64"
+              />
+
+              <Button onClick={() => setCreateDialogOpen(true)} className="shrink-0">
+                <Plus className="h-4 w-4 sm:mr-2" />
+                <span className="hidden sm:inline">{t('notebooks.newNotebook')}</span>
               </Button>
             </div>
-            <Input
-              id="notebook-search"
-              name="notebook-search"
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder={t('notebooks.searchPlaceholder')}
-              autoComplete="off"
-              aria-label={t('common.accessibility.searchNotebooks') || "Search notebooks"}
-              className="w-full sm:w-64"
-            />
-            <Button onClick={() => setCreateDialogOpen(true)}>
-              <Plus className="h-4 w-4 mr-2" />
-              {t('notebooks.newNotebook')}
-            </Button>
           </div>
-        </div>
         
         <div className="space-y-8">
           <RecentlyViewed />

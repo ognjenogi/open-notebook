@@ -316,10 +316,10 @@ export default function SourcesPage() {
     }
 
     return (<>
-      <div className="flex flex-col h-full w-full max-w-none px-6 py-6">
-        <div className="mb-6 flex-shrink-0">
-          <h1 className="font-display text-2xl font-bold tracking-tight">{t('sources.allSources')}</h1>
-          <p className="mt-2 text-muted-foreground">
+      <div className="flex flex-col h-full w-full max-w-none px-3 sm:px-6 py-3 sm:py-6">
+        <div className="mb-4 sm:mb-6 flex-shrink-0">
+          <h1 className="font-display text-xl sm:text-2xl font-bold tracking-tight">{t('sources.allSources')}</h1>
+          <p className="mt-1 sm:mt-2 text-sm text-muted-foreground">
             {t('sources.allSourcesDesc')}
           </p>
         </div>

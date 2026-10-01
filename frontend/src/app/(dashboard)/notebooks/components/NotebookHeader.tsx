@@ -50,24 +50,24 @@ export function NotebookHeader({ notebook }: NotebookHeaderProps) {
 
   return (
     <>
-      <div className="border-b pb-6">
+      <div className="border-b pb-4 sm:pb-6">
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3 flex-1">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3 flex-1 min-w-0">
               <InlineEdit
                 id="notebook-name"
                 name="notebook-name"
                 value={notebook.name}
                 onSave={handleUpdateName}
-                className="font-display text-2xl font-bold tracking-tight"
-                inputClassName="font-display text-2xl font-bold tracking-tight"
+                className="font-display text-xl sm:text-2xl font-bold tracking-tight truncate"
+                inputClassName="font-display text-xl sm:text-2xl font-bold tracking-tight"
                 placeholder={t('notebooks.namePlaceholder')}
               />
               {notebook.archived && (
-                <Badge variant="secondary">{t('notebooks.archived')}</Badge>
+                <Badge variant="secondary" className="shrink-0">{t('notebooks.archived')}</Badge>
               )}
             </div>
-            <div className="flex gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               <Button
                 variant="outline"
                 size="sm"
@@ -75,13 +75,13 @@ export function NotebookHeader({ notebook }: NotebookHeaderProps) {
               >
                 {notebook.archived ? (
                   <>
-                    <ArchiveRestore className="h-4 w-4 mr-2" />
-                    {t('notebooks.unarchive')}
+                    <ArchiveRestore className="h-4 w-4 sm:mr-2" />
+                    <span className="hidden sm:inline">{t('notebooks.unarchive')}</span>
                   </>
                 ) : (
                   <>
-                    <Archive className="h-4 w-4 mr-2" />
-                    {t('notebooks.archive')}
+                    <Archive className="h-4 w-4 sm:mr-2" />
+                    <span className="hidden sm:inline">{t('notebooks.archive')}</span>
                   </>
                 )}
               </Button>
@@ -91,8 +91,8 @@ export function NotebookHeader({ notebook }: NotebookHeaderProps) {
                 onClick={() => setShowDeleteDialog(true)}
                 className="text-destructive hover:text-destructive"
               >
-                <Trash2 className="h-4 w-4 mr-2" />
-                {t('common.delete')}
+                <Trash2 className="h-4 w-4 sm:mr-2" />
+                <span className="hidden sm:inline">{t('common.delete')}</span>
               </Button>
             </div>
           </div>

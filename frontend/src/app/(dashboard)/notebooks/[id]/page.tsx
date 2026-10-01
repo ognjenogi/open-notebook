@@ -154,35 +154,35 @@ export default function NotebookPage() {
   return (
     <AppShell>
       <div className="flex flex-col flex-1 min-h-0">
-        <div className="flex-shrink-0 p-6 pb-0">
+        <div className="flex-shrink-0 p-3 sm:p-6 pb-0 sm:pb-0">
           <NotebookHeader notebook={notebook} />
         </div>
 
-        <div className="flex-1 p-6 pt-6 overflow-x-auto flex flex-col">
+        <div className="flex-1 p-3 sm:p-6 pt-3 sm:pt-6 overflow-hidden flex flex-col min-h-0">
           {/* Mobile: Tabbed interface - only render on mobile to avoid double-mounting */}
           {!isDesktop && (
             <>
-              <div className="lg:hidden mb-4">
+              <div className="lg:hidden mb-3">
                 <Tabs value={mobileActiveTab} onValueChange={(value) => setMobileActiveTab(value as 'sources' | 'notes' | 'chat')}>
-                  <TabsList className="grid w-full grid-cols-3">
-                    <TabsTrigger value="sources" className="gap-2">
-                      <FileText className="h-4 w-4" />
-                      {t('navigation.sources')}
+                  <TabsList className="grid w-full grid-cols-3 h-9">
+                    <TabsTrigger value="sources" className="gap-1.5 text-xs">
+                      <FileText className="h-3.5 w-3.5" />
+                      <span>{t('navigation.sources')}</span>
                     </TabsTrigger>
-                    <TabsTrigger value="notes" className="gap-2">
-                      <StickyNote className="h-4 w-4" />
-                      {t('common.notes')}
+                    <TabsTrigger value="notes" className="gap-1.5 text-xs">
+                      <StickyNote className="h-3.5 w-3.5" />
+                      <span>{t('common.notes')}</span>
                     </TabsTrigger>
-                    <TabsTrigger value="chat" className="gap-2">
-                      <MessageSquare className="h-4 w-4" />
-                      {t('common.chat')}
+                    <TabsTrigger value="chat" className="gap-1.5 text-xs">
+                      <MessageSquare className="h-3.5 w-3.5" />
+                      <span>{t('common.chat')}</span>
                     </TabsTrigger>
                   </TabsList>
                 </Tabs>
               </div>
 
               {/* Mobile: Show only active tab */}
-              <div className="flex-1 overflow-hidden lg:hidden">
+              <div className="flex-1 overflow-hidden lg:hidden flex flex-col min-h-0">
                 {mobileActiveTab === 'sources' && (
                   <SourcesColumn
                     sources={sources}

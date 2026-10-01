@@ -40,6 +40,7 @@ import {
   Plus,
   Wrench,
   Command,
+  X,
 } from 'lucide-react'
 
 const getNavigation = (t: TFunction) => [
@@ -104,6 +105,8 @@ export function AppSidebar() {
     .sort((a, b) => b.href.length - a.href.length)[0]?.href
 
   const [createMenuOpen, setCreateMenuOpen] = useState(false)
+  const [mobileCreateOpen, setMobileCreateOpen] = useState(false)
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
   const [isMac, setIsMac] = useState(true) // Default to Mac for SSR
 
   // Detect platform for keyboard shortcut display and collapse sidebar on mobile
@@ -116,6 +119,8 @@ export function AppSidebar() {
 
   const handleCreateSelection = (target: CreateTarget) => {
     setCreateMenuOpen(false)
+    setMobileCreateOpen(false)
+    setMobileDrawerOpen(false)
 
     if (target === 'source') {
       openSourceDialog()
@@ -130,7 +135,7 @@ export function AppSidebar() {
     <TooltipProvider delayDuration={0}>
       <div
         className={cn(
-          'app-sidebar flex h-full flex-col bg-sidebar border-sidebar-border border-r transition-all duration-300',
+          'app-sidebar hidden md:flex h-full flex-col bg-sidebar border-sidebar-border border-r transition-all duration-300',
           isCollapsed ? 'w-16' : 'w-64'
         )}
       >
@@ -393,6 +398,179 @@ export function AppSidebar() {
           )}
         </div>
       </div>
+
+      {/* Mobile Bottom Navigation Bar */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-sidebar/95 backdrop-blur-md border-t border-sidebar-border flex items-center justify-around px-2 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-lg">
+        <Link
+          href="/notebooks"
+          className={cn(
+            'flex flex-col items-center justify-center py-1 px-2.5 rounded-lg text-[10px] transition-colors',
+            (pathname === '/notebooks' || pathname?.startsWith('/notebooks/'))
+              ? 'text-teal font-semibold'
+              : 'text-sidebar-foreground/60 hover:text-sidebar-foreground'
+          )}
+        >
+          <Book className="h-5 w-5 mb-0.5" />
+          <span>{t('navigation.notebooks')}</span>
+        </Link>
+
+        <Link
+          href="/sources"
+          className={cn(
+            'flex flex-col items-center justify-center py-1 px-2.5 rounded-lg text-[10px] transition-colors',
+            (pathname === '/sources' || pathname?.startsWith('/sources/'))
+              ? 'text-sage font-semibold'
+              : 'text-sidebar-foreground/60 hover:text-sidebar-foreground'
+          )}
+        >
+          <FileText className="h-5 w-5 mb-0.5" />
+          <span>{t('navigation.sources')}</span>
+        </Link>
+
+        {/* Center Create Button */}
+        <DropdownMenu open={mobileCreateOpen} onOpenChange={setMobileCreateOpen}>
+          <DropdownMenuTrigger asChild>
+            <Button
+              size="sm"
+              className="h-10 w-10 rounded-full p-0 shadow-md bg-fern text-white hover:bg-fern-deep"
+              aria-label={t('common.create')}
+            >
+              <Plus className="h-5 w-5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="center" side="top" className="w-48 mb-2">
+            <DropdownMenuItem
+              onSelect={(e) => {
+                e.preventDefault()
+                handleCreateSelection('source')
+              }}
+              className="gap-2"
+            >
+              <FileText className="h-4 w-4" />
+              {t('common.source')}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={(e) => {
+                e.preventDefault()
+                handleCreateSelection('notebook')
+              }}
+              className="gap-2"
+            >
+              <Book className="h-4 w-4" />
+              {t('common.notebook')}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={(e) => {
+                e.preventDefault()
+                handleCreateSelection('podcast')
+              }}
+              className="gap-2"
+            >
+              <Mic className="h-4 w-4" />
+              {t('common.podcast')}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <Link
+          href="/search"
+          className={cn(
+            'flex flex-col items-center justify-center py-1 px-2.5 rounded-lg text-[10px] transition-colors',
+            (pathname === '/search' || pathname?.startsWith('/search/'))
+              ? 'text-teal font-semibold'
+              : 'text-sidebar-foreground/60 hover:text-sidebar-foreground'
+          )}
+        >
+          <Search className="h-5 w-5 mb-0.5" />
+          <span>{t('navigation.askAndSearch') || 'Search'}</span>
+        </Link>
+
+        <button
+          type="button"
+          onClick={() => setMobileDrawerOpen(true)}
+          className="flex flex-col items-center justify-center py-1 px-2.5 rounded-lg text-[10px] text-sidebar-foreground/60 hover:text-sidebar-foreground transition-colors"
+        >
+          <Menu className="h-5 w-5 mb-0.5" />
+          <span>{t('common.quickActions') || 'Menu'}</span>
+        </button>
+      </div>
+
+      {/* Mobile Slide-over Drawer */}
+      {mobileDrawerOpen && (
+        <div className="fixed inset-0 z-50 md:hidden">
+          <div
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
+            onClick={() => setMobileDrawerOpen(false)}
+          />
+          <div className="fixed inset-y-0 left-0 w-72 max-w-[85vw] bg-sidebar border-r border-sidebar-border p-4 flex flex-col shadow-2xl z-50 animate-in slide-in-from-left duration-200">
+            <div className="flex items-center justify-between pb-3 border-b border-sidebar-border">
+              <div className="flex items-center gap-2.5">
+                <LogoPebbles />
+                <span className="font-display text-[15px] font-bold tracking-tight text-sidebar-foreground">
+                  {t('common.appName')}
+                </span>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setMobileDrawerOpen(false)}
+                className="text-sidebar-foreground h-8 w-8 p-0"
+                aria-label="Close menu"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto py-3 space-y-3">
+              {navigation.map((section, index) => (
+                <div key={section.title}>
+                  {index > 0 && <Separator className="my-2" />}
+                  <h3 className="mb-1 px-2 text-[10.5px] font-bold uppercase tracking-[0.14em] text-sidebar-foreground/40">
+                    {section.title}
+                  </h3>
+                  <div className="space-y-0.5">
+                    {section.items.map((item) => {
+                      const isActive = item.href === activeHref
+                      return (
+                        <Link
+                          key={item.name}
+                          href={item.href}
+                          onClick={() => setMobileDrawerOpen(false)}
+                          className={cn(
+                            'flex items-center gap-2.5 w-full px-3 py-2 rounded-md text-[13px] font-medium transition-colors',
+                            isActive
+                              ? 'bg-popover font-semibold text-sidebar-foreground ring-1 ring-inset ring-border'
+                              : 'text-sidebar-foreground/80 hover:bg-sidebar-accent'
+                          )}
+                        >
+                          <item.icon className={cn('h-4 w-4 opacity-85', item.iconClass)} />
+                          <span>{item.name}</span>
+                        </Link>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="border-t border-sidebar-border pt-3 space-y-2">
+              <ThemeToggle />
+              <LanguageToggle />
+              <Button
+                variant="outline"
+                className="w-full justify-start gap-2"
+                onClick={() => {
+                  setMobileDrawerOpen(false)
+                  logout()
+                }}
+              >
+                <LogOut className="h-4 w-4" />
+                {t('common.signOut')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </TooltipProvider>
   )
 }
