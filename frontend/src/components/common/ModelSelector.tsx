@@ -1,12 +1,16 @@
 import { useId, useMemo, useState } from 'react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
-import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { useModels } from '@/lib/hooks/use-models'
 import { useCredentials } from '@/lib/hooks/use-credentials'
 import { LoadingSpinner } from '@/components/common/LoadingSpinner'
 import { useTranslation } from '@/lib/hooks/use-translation'
+import { ModelFilterBar } from '@/components/common/ModelFilterBar'
+import {
+  computeModelCredentialCounts,
+  filterModelsByCredentialAndSearch,
+} from '@/lib/utils/model-filter'
 
 interface ModelSelectorProps {
   id?: string
@@ -27,7 +31,7 @@ export function ModelSelector({
   value,
   onChange,
   placeholder,
-  disabled = false
+  disabled = false,
 }: ModelSelectorProps) {
   const { t } = useTranslation()
   const [search, setSearch] = useState('')
@@ -37,6 +41,12 @@ export function ModelSelector({
   const isLoading = modelsLoading || credentialsLoading
   const derivedId = useId()
   const selectId = id || derivedId
+
+  const openRouterCred = useMemo(() => {
+    return credentials?.find(
+      (c) => c.provider === 'openrouter' || c.name.toLowerCase().includes('openrouter')
+    )
+  }, [credentials])
 
   const credMap = useMemo(() => {
     const map = new Map<string, string>()
@@ -48,31 +58,28 @@ export function ModelSelector({
 
   // Filter models by type
   const typeModels = useMemo(() => {
-    return models?.filter(model => model.type === modelType) || []
+    return models?.filter((model) => model.type === modelType) || []
   }, [models, modelType])
+
+  const { totalCount, countsByCredId } = useMemo(() => {
+    return computeModelCredentialCounts(typeModels, credentials)
+  }, [typeModels, credentials])
 
   // Filter by search and credential
   const filteredModels = useMemo(() => {
-    return typeModels.filter((model) => {
-      const credName = model.credential ? credMap.get(model.credential) || '' : model.provider || ''
-      const query = search.trim().toLowerCase()
-      const matchesSearch =
-        !query ||
-        model.name.toLowerCase().includes(query) ||
-        credName.toLowerCase().includes(query) ||
-        model.provider.toLowerCase().includes(query)
-
-      const matchesCredential =
-        selectedCredential === 'all' || model.credential === selectedCredential
-
-      return matchesSearch && matchesCredential
-    })
-  }, [typeModels, search, selectedCredential, credMap])
+    return filterModelsByCredentialAndSearch(
+      typeModels,
+      search,
+      selectedCredential,
+      credMap,
+      openRouterCred?.id
+    )
+  }, [typeModels, search, selectedCredential, credMap, openRouterCred?.id])
 
   // Ensure currently selected model is visible in the select even if filtered out
   const displayModels = useMemo(() => {
-    if (value && !filteredModels.some(m => m.id === value)) {
-      const current = typeModels.find(m => m.id === value)
+    if (value && !filteredModels.some((m) => m.id === value)) {
+      const current = typeModels.find((m) => m.id === value)
       if (current) {
         return [current, ...filteredModels]
       }
@@ -83,37 +90,24 @@ export function ModelSelector({
   return (
     <div className="space-y-2">
       {label && <Label htmlFor={selectId}>{label}</Label>}
-      <div className="flex gap-2">
-        <Input
-          placeholder={t('models.searchModels') || 'Search models...'}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="h-8 text-xs flex-1"
-          disabled={disabled || isLoading}
-        />
-        <Select
-          value={selectedCredential}
-          onValueChange={setSelectedCredential}
-          disabled={disabled || isLoading}
-        >
-          <SelectTrigger className="h-8 text-xs w-[130px] shrink-0">
-            <SelectValue placeholder="All Credentials" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Credentials</SelectItem>
-            {credentials?.map((c) => (
-              <SelectItem key={c.id} value={c.id}>
-                {c.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+
+      {/* Model Filter Bar */}
+      <ModelFilterBar
+        searchQuery={search}
+        onSearchChange={setSearch}
+        selectedCredential={selectedCredential}
+        onCredentialChange={setSelectedCredential}
+        totalCount={totalCount}
+        credentialCounts={countsByCredId}
+        credentials={credentials || []}
+        compact
+      />
+
       <Select name={name} value={value} onValueChange={onChange} disabled={disabled || isLoading}>
         <SelectTrigger id={selectId}>
           <SelectValue placeholder={placeholder || t('settings.embeddingOptionPlaceholder')} />
         </SelectTrigger>
-        <SelectContent>
+        <SelectContent className="max-h-[300px]">
           {isLoading ? (
             <div className="flex items-center justify-center py-2">
               <LoadingSpinner size="sm" />
@@ -124,7 +118,11 @@ export function ModelSelector({
             </div>
           ) : (
             displayModels.map((model) => {
-              const credName = model.credential ? credMap.get(model.credential) : model.provider
+              let credId = model.credential
+              if (!credId && model.provider === 'openrouter' && openRouterCred) {
+                credId = openRouterCred.id
+              }
+              const credName = credId ? credMap.get(credId) : model.provider
               const optionLabel = credName ? `${credName} · ${model.name}` : model.name
               return (
                 <SelectItem key={model.id} value={model.id}>

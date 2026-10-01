@@ -14,6 +14,11 @@ import { useCredentials } from '@/lib/hooks/use-credentials'
 import { Model, ModelDefaults } from '@/lib/types/models'
 import { ModelType } from '@/lib/providers'
 import { EmbeddingModelChangeDialog } from './EmbeddingModelChangeDialog'
+import { ModelFilterBar } from '@/components/common/ModelFilterBar'
+import {
+  computeModelCredentialCounts,
+  filterModelsByCredentialAndSearch,
+} from '@/lib/utils/model-filter'
 
 interface DefaultConfig {
   key: keyof ModelDefaults
@@ -32,6 +37,7 @@ const NONE_VALUE = '__none__'
 interface DefaultModelSelectProps {
   config: DefaultConfig
   available: Model[]
+  allModels: Model[]
   currentValue?: string
   onChange: (key: keyof ModelDefaults, value: string) => void
   showDescription?: boolean
@@ -43,6 +49,7 @@ interface DefaultModelSelectProps {
 function DefaultModelSelect({
   config,
   available,
+  allModels,
   currentValue,
   onChange,
   showDescription,
@@ -50,7 +57,17 @@ function DefaultModelSelect({
   credMap,
 }: DefaultModelSelectProps) {
   const { t } = useTranslation()
-  const isValid = currentValue && available.some(m => m.id === currentValue)
+  const isValid = currentValue && allModels.some((m) => m.id === currentValue)
+
+  const displayModels = useMemo(() => {
+    if (currentValue && !available.some((m) => m.id === currentValue)) {
+      const current = allModels.find((m) => m.id === currentValue)
+      if (current) {
+        return [current, ...available]
+      }
+    }
+    return available
+  }, [available, currentValue, allModels])
 
   // Hint shown when an optional slot is left empty, clarifying the effective
   // behavior (chat-model fallback vs. feature unavailable) — see #1098.
@@ -74,20 +91,24 @@ function DefaultModelSelect({
       </Label>
       <div className="flex gap-1">
         <Select
-          value={currentValue || (config.required ? "" : NONE_VALUE)}
-          onValueChange={(v) => onChange(config.key, v === NONE_VALUE ? "" : v)}
+          value={currentValue || (config.required ? '' : NONE_VALUE)}
+          onValueChange={(v) => onChange(config.key, v === NONE_VALUE ? '' : v)}
         >
           <SelectTrigger
             id={config.id}
-            className={`h-8 text-xs ${config.required && !isValid && available.length > 0 ? 'border-destructive' : ''}`}
+            className={`h-8 text-xs ${
+              config.required && !isValid && available.length > 0 ? 'border-destructive' : ''
+            }`}
           >
-            <SelectValue placeholder={
-              config.required && !isValid && available.length > 0
-                ? t('models.requiredModelPlaceholder')
-                : t('models.selectModelPlaceholder')
-            } />
+            <SelectValue
+              placeholder={
+                config.required && !isValid && available.length > 0
+                  ? t('models.requiredModelPlaceholder')
+                  : t('models.selectModelPlaceholder')
+              }
+            />
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent className="max-h-[300px]">
             {!config.required && (
               <SelectItem value={NONE_VALUE}>
                 <span className="text-muted-foreground">
@@ -95,27 +116,34 @@ function DefaultModelSelect({
                 </span>
               </SelectItem>
             )}
-            {available.sort((a, b) => {
-              const credA = a.credential ? credMap.get(a.credential) || a.provider : a.provider
-              const credB = b.credential ? credMap.get(b.credential) || b.provider : b.provider
-              const labelA = `${credA} · ${a.name}`
-              const labelB = `${credB} · ${b.name}`
-              return labelA.localeCompare(labelB)
-            }).map(model => {
-              const credName = model.credential ? credMap.get(model.credential) : model.provider
-              const optionLabel = credName ? `${credName} · ${model.name}` : model.name
-              return (
-                <SelectItem key={model.id} value={model.id}>
-                  <div className="flex items-center justify-between w-full">
-                    <span>{optionLabel}</span>
-                  </div>
-                </SelectItem>
-              )
-            })}
+            {displayModels
+              .sort((a, b) => {
+                const credA = a.credential ? credMap.get(a.credential) || a.provider : a.provider
+                const credB = b.credential ? credMap.get(b.credential) || b.provider : b.provider
+                const labelA = `${credA} · ${a.name}`
+                const labelB = `${credB} · ${b.name}`
+                return labelA.localeCompare(labelB)
+              })
+              .map((model) => {
+                const credName = model.credential ? credMap.get(model.credential) : model.provider
+                const optionLabel = credName ? `${credName} · ${model.name}` : model.name
+                return (
+                  <SelectItem key={model.id} value={model.id}>
+                    <div className="flex items-center justify-between w-full">
+                      <span>{optionLabel}</span>
+                    </div>
+                  </SelectItem>
+                )
+              })}
           </SelectContent>
         </Select>
         {!config.required && currentValue && (
-          <Button variant="ghost" size="icon" onClick={() => onChange(config.key, "")} className="h-8 w-8 shrink-0">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => onChange(config.key, '')}
+            className="h-8 w-8 shrink-0 cursor-pointer"
+          >
             <X className="h-3 w-3" />
           </Button>
         )}
@@ -135,16 +163,22 @@ interface DefaultModelSelectorsProps {
   defaults: ModelDefaults
 }
 
-export function DefaultModelSelectors({
-  models,
-  defaults,
-}: DefaultModelSelectorsProps) {
+export function DefaultModelSelectors({ models, defaults }: DefaultModelSelectorsProps) {
   const { t } = useTranslation()
   const updateDefaults = useUpdateModelDefaults()
   const autoAssign = useAutoAssignDefaults()
   const { setValue, watch } = useForm<ModelDefaults>({ defaultValues: defaults })
   const generatedId = useId()
   const { data: credentials } = useCredentials()
+  const [search, setSearch] = useState('')
+  const [selectedCredential, setSelectedCredential] = useState('all')
+
+  const openRouterCred = useMemo(() => {
+    return credentials?.find(
+      (c) => c.provider === 'openrouter' || c.name.toLowerCase().includes('openrouter')
+    )
+  }, [credentials])
+
   const credMap = useMemo(() => {
     const map = new Map<string, string>()
     for (const c of credentials || []) {
@@ -153,9 +187,16 @@ export function DefaultModelSelectors({
     return map
   }, [credentials])
 
+  const { totalCount, countsByCredId } = useMemo(() => {
+    return computeModelCredentialCounts(models, credentials)
+  }, [models, credentials])
+
   const [showEmbeddingDialog, setShowEmbeddingDialog] = useState(false)
   const [pendingEmbeddingChange, setPendingEmbeddingChange] = useState<{
-    key: keyof ModelDefaults; value: string; oldModelId?: string; newModelId?: string
+    key: keyof ModelDefaults
+    value: string
+    oldModelId?: string
+    newModelId?: string
   } | null>(null)
 
   useEffect(() => {
@@ -167,16 +208,63 @@ export function DefaultModelSelectors({
   }, [defaults, setValue])
 
   const primaryConfigs: DefaultConfig[] = [
-    { key: 'default_chat_model', label: t('models.chatModelLabel'), description: t('models.chatModelDesc'), modelType: 'language', required: true, id: `${generatedId}-chat` },
-    { key: 'default_embedding_model', label: t('models.embeddingModelLabel'), description: t('models.embeddingModelDesc'), modelType: 'embedding', required: true, id: `${generatedId}-embed` },
-    { key: 'default_text_to_speech_model', label: t('models.ttsModelLabel'), description: t('models.ttsModelDesc'), modelType: 'text_to_speech', id: `${generatedId}-tts` },
-    { key: 'default_speech_to_text_model', label: t('models.sttModelLabel'), description: t('models.sttModelDesc'), modelType: 'speech_to_text', id: `${generatedId}-stt` },
+    {
+      key: 'default_chat_model',
+      label: t('models.chatModelLabel'),
+      description: t('models.chatModelDesc'),
+      modelType: 'language',
+      required: true,
+      id: `${generatedId}-chat`,
+    },
+    {
+      key: 'default_embedding_model',
+      label: t('models.embeddingModelLabel'),
+      description: t('models.embeddingModelDesc'),
+      modelType: 'embedding',
+      required: true,
+      id: `${generatedId}-embed`,
+    },
+    {
+      key: 'default_text_to_speech_model',
+      label: t('models.ttsModelLabel'),
+      description: t('models.ttsModelDesc'),
+      modelType: 'text_to_speech',
+      id: `${generatedId}-tts`,
+    },
+    {
+      key: 'default_speech_to_text_model',
+      label: t('models.sttModelLabel'),
+      description: t('models.sttModelDesc'),
+      modelType: 'speech_to_text',
+      id: `${generatedId}-stt`,
+    },
   ]
 
   const advancedConfigs: DefaultConfig[] = [
-    { key: 'default_transformation_model', label: t('models.transformationModelLabel'), description: t('models.transformationModelDesc'), modelType: 'language', fallsBackToChat: true, id: `${generatedId}-transform` },
-    { key: 'default_tools_model', label: t('models.toolsModelLabel'), description: t('models.toolsModelDesc'), modelType: 'language', fallsBackToChat: true, id: `${generatedId}-tools` },
-    { key: 'large_context_model', label: t('models.largeContextModelLabel'), description: t('models.largeContextModelDesc'), modelType: 'language', fallsBackToChat: true, id: `${generatedId}-large` },
+    {
+      key: 'default_transformation_model',
+      label: t('models.transformationModelLabel'),
+      description: t('models.transformationModelDesc'),
+      modelType: 'language',
+      fallsBackToChat: true,
+      id: `${generatedId}-transform`,
+    },
+    {
+      key: 'default_tools_model',
+      label: t('models.toolsModelLabel'),
+      description: t('models.toolsModelDesc'),
+      modelType: 'language',
+      fallsBackToChat: true,
+      id: `${generatedId}-tools`,
+    },
+    {
+      key: 'large_context_model',
+      label: t('models.largeContextModelLabel'),
+      description: t('models.largeContextModelDesc'),
+      modelType: 'language',
+      fallsBackToChat: true,
+      id: `${generatedId}-large`,
+    },
   ]
 
   const defaultConfigs = [...primaryConfigs, ...advancedConfigs]
@@ -200,24 +288,37 @@ export function DefaultModelSelectors({
     }
   }
 
-  const getModelsForType = (type: ModelType) => models.filter(m => m.type === type)
+  const getModelsForType = (type: ModelType) => {
+    const typeModels = models.filter((m) => m.type === type)
+    return filterModelsByCredentialAndSearch(
+      typeModels,
+      search,
+      selectedCredential,
+      credMap,
+      openRouterCred?.id
+    )
+  }
 
-  const selectedChatModel = models.find(m => m.id === watch('default_chat_model'))
+  const selectedChatModel = models.find((m) => m.id === watch('default_chat_model'))
   const chatModelName = selectedChatModel
     ? (() => {
-        const credName = selectedChatModel.credential ? credMap.get(selectedChatModel.credential) : selectedChatModel.provider
+        let credId = selectedChatModel.credential
+        if (!credId && selectedChatModel.provider === 'openrouter' && openRouterCred) {
+          credId = openRouterCred.id
+        }
+        const credName = credId ? credMap.get(credId) : selectedChatModel.provider
         return credName ? `${credName} · ${selectedChatModel.name}` : selectedChatModel.name
       })()
     : undefined
 
   const missingRequired = defaultConfigs
-    .filter(c => {
+    .filter((c) => {
       if (!c.required) return false
       const value = defaults[c.key]
       if (!value) return true
-      return !models.filter(m => m.type === c.modelType).some(m => m.id === value)
+      return !models.filter((m) => m.type === c.modelType).some((m) => m.id === value)
     })
-    .map(c => c.label)
+    .map((c) => c.label)
 
   return (
     <Card>
@@ -225,32 +326,50 @@ export function DefaultModelSelectors({
         <CardTitle>{t('models.defaultAssignments')}</CardTitle>
         <CardDescription>{t('models.defaultAssignmentsDesc')}</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-6">
+      <CardContent className="space-y-5">
         {missingRequired.length > 0 && (
           <Alert>
             <AlertCircle className="h-4 w-4" />
             <AlertDescription className="flex items-center justify-between gap-4">
               <span>{t('models.missingRequiredModels', { models: missingRequired.join(', ') })}</span>
               <Button
-                variant="outline" size="sm"
+                variant="outline"
+                size="sm"
                 onClick={() => autoAssign.mutate()}
                 disabled={autoAssign.isPending}
-                className="shrink-0 gap-1.5"
+                className="shrink-0 gap-1.5 cursor-pointer"
               >
-                {autoAssign.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
+                {autoAssign.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Wand2 className="h-3.5 w-3.5" />
+                )}
                 {autoAssign.isPending ? t('models.autoAssigning') : t('models.autoAssign')}
               </Button>
             </AlertDescription>
           </Alert>
         )}
 
+        {/* Filter Bar for Default Model Selectors */}
+        <ModelFilterBar
+          searchQuery={search}
+          onSearchChange={setSearch}
+          selectedCredential={selectedCredential}
+          onCredentialChange={setSelectedCredential}
+          totalCount={totalCount}
+          credentialCounts={countsByCredId}
+          credentials={credentials || []}
+          compact
+        />
+
         {/* Primary models: Chat, Embedding, TTS, STT */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {primaryConfigs.map(config => (
+          {primaryConfigs.map((config) => (
             <DefaultModelSelect
               key={config.key}
               config={config}
               available={getModelsForType(config.modelType)}
+              allModels={models}
               currentValue={watch(config.key) || undefined}
               onChange={handleChange}
               chatModelName={chatModelName}
@@ -262,29 +381,43 @@ export function DefaultModelSelectors({
         {/* Advanced models: Transformation, Tools, Large Context */}
         <div className="border-t pt-3">
           <p className="text-xs text-muted-foreground mb-3">{t('navigation.advanced')}</p>
-            <div className="grid gap-3 sm:grid-cols-3">
-              {advancedConfigs.map(config => (
-                <DefaultModelSelect
-                  key={config.key}
-                  config={config}
-                  available={getModelsForType(config.modelType)}
-                  currentValue={watch(config.key) || undefined}
-                  onChange={handleChange}
-                  showDescription
-                  chatModelName={chatModelName}
-                  credMap={credMap}
-                />
-              ))}
-            </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {advancedConfigs.map((config) => (
+              <DefaultModelSelect
+                key={config.key}
+                config={config}
+                available={getModelsForType(config.modelType)}
+                allModels={models}
+                currentValue={watch(config.key) || undefined}
+                onChange={handleChange}
+                showDescription
+                chatModelName={chatModelName}
+                credMap={credMap}
+              />
+            ))}
+          </div>
         </div>
       </CardContent>
 
       <EmbeddingModelChangeDialog
         open={showEmbeddingDialog}
-        onOpenChange={(open) => { if (!open) { setPendingEmbeddingChange(null); setShowEmbeddingDialog(false) } }}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingEmbeddingChange(null)
+            setShowEmbeddingDialog(false)
+          }
+        }}
         onConfirm={handleConfirmEmbeddingChange}
-        oldModelName={pendingEmbeddingChange?.oldModelId ? models.find(m => m.id === pendingEmbeddingChange.oldModelId)?.name : undefined}
-        newModelName={pendingEmbeddingChange?.newModelId ? models.find(m => m.id === pendingEmbeddingChange.newModelId)?.name : undefined}
+        oldModelName={
+          pendingEmbeddingChange?.oldModelId
+            ? models.find((m) => m.id === pendingEmbeddingChange.oldModelId)?.name
+            : undefined
+        }
+        newModelName={
+          pendingEmbeddingChange?.newModelId
+            ? models.find((m) => m.id === pendingEmbeddingChange.newModelId)?.name
+            : undefined
+        }
       />
     </Card>
   )

@@ -1,24 +1,18 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { AppShell } from '@/components/layout/AppShell'
 import { LoadingSpinner } from '@/components/common/LoadingSpinner'
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
-import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Key, ShieldAlert, AlertCircle } from 'lucide-react'
 import { useTranslation } from '@/lib/hooks/use-translation'
-import { useModels, useModelDefaults } from '@/lib/hooks/use-models'
+import { useModels, useModelDefaults, MODEL_QUERY_KEYS } from '@/lib/hooks/use-models'
 import {
   useCredentials,
   useCredentialStatus,
   useEnvStatus,
+  CREDENTIAL_QUERY_KEYS,
 } from '@/lib/hooks/use-credentials'
 import { useProviders } from '@/lib/hooks/use-providers'
 import { Credential } from '@/lib/api/credentials'
@@ -27,9 +21,15 @@ import {
   MigrationBanner,
   ProviderSection,
 } from '@/components/settings'
+import { ModelFilterBar } from '@/components/common/ModelFilterBar'
+import {
+  computeModelCredentialCounts,
+  filterModelsByCredentialAndSearch,
+} from '@/lib/utils/model-filter'
 
 export default function ApiKeysPage() {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const [searchQuery, setSearchQuery] = useState('')
   const [credentialFilter, setCredentialFilter] = useState('all')
 
@@ -47,18 +47,34 @@ export default function ApiKeysPage() {
 
   const encryptionReady = credentialStatus?.encryption_configured ?? true
 
+  const openRouterCred = useMemo(() => {
+    return credentials?.find(
+      (c) => c.provider === 'openrouter' || c.name.toLowerCase().includes('openrouter')
+    )
+  }, [credentials])
+
+  const credMap = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const c of credentials || []) {
+      map.set(c.id, c.name)
+    }
+    return map
+  }, [credentials])
+
+  const { totalCount, countsByCredId } = useMemo(() => {
+    return computeModelCredentialCounts(models, credentials)
+  }, [models, credentials])
+
   // Filter models by search query and credential
   const filteredModels = useMemo(() => {
-    let result = models || []
-    if (searchQuery.trim()) {
-      const q = searchQuery.trim().toLowerCase()
-      result = result.filter(m => m.name.toLowerCase().includes(q))
-    }
-    if (credentialFilter !== 'all') {
-      result = result.filter(m => m.credential === credentialFilter)
-    }
-    return result
-  }, [models, searchQuery, credentialFilter])
+    return filterModelsByCredentialAndSearch(
+      models,
+      searchQuery,
+      credentialFilter,
+      credMap,
+      openRouterCred?.id
+    )
+  }, [models, searchQuery, credentialFilter, credMap, openRouterCred?.id])
 
   // Group credentials by provider
   const credentialsByProvider = useMemo(() => {
@@ -103,18 +119,31 @@ export default function ApiKeysPage() {
     if (credentialFilter === 'all' && !searchQuery.trim()) {
       return sortedProviders
     }
-    return sortedProviders.filter(provider => {
+    return sortedProviders.filter((provider) => {
       const creds = credentialsByProvider[provider.name] || []
       const hasCreds = creds.length > 0
-      const hasMatchingModels = filteredModels.some(m =>
-        creds.some(c => c.id === m.credential) || (m.provider === provider.name && !m.credential)
-      )
+      const hasMatchingModels = filteredModels.some((m) => {
+        let mCredId = m.credential
+        if (!mCredId && m.provider === 'openrouter' && openRouterCred) {
+          mCredId = openRouterCred.id
+        }
+        return creds.some((c) => c.id === mCredId) || (m.provider === provider.name && !mCredId)
+      })
       if (credentialFilter !== 'all') {
-        return hasCreds
+        return hasCreds && (hasMatchingModels || filteredModels.length === 0)
       }
       return hasMatchingModels || hasCreds
     })
-  }, [sortedProviders, credentialsByProvider, filteredModels, credentialFilter, searchQuery])
+  }, [sortedProviders, credentialsByProvider, filteredModels, credentialFilter, searchQuery, openRouterCred])
+
+  const handleRefresh = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: MODEL_QUERY_KEYS.models }),
+      queryClient.invalidateQueries({ queryKey: CREDENTIAL_QUERY_KEYS.all }),
+      queryClient.invalidateQueries({ queryKey: ['providers'] }),
+      queryClient.invalidateQueries({ queryKey: MODEL_QUERY_KEYS.defaults }),
+    ])
+  }
 
   const isLoading = credentialsLoading || modelsLoading || defaultsLoading || providersLoading
 
@@ -162,35 +191,17 @@ export default function ApiKeysPage() {
             <DefaultModelSelectors models={models} defaults={defaults} />
           )}
 
-          {/* Filter Controls */}
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="flex-1">
-              <Input
-                placeholder="Search models…"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full"
-              />
-            </div>
-            <div className="w-full sm:w-[240px]">
-              <Select
-                value={credentialFilter}
-                onValueChange={setCredentialFilter}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="All Credentials" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All</SelectItem>
-                  {(credentials || []).map((cred) => (
-                    <SelectItem key={cred.id} value={cred.id}>
-                      {cred.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+          {/* Filter Controls matching photo */}
+          <ModelFilterBar
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            selectedCredential={credentialFilter}
+            onCredentialChange={setCredentialFilter}
+            totalCount={totalCount}
+            credentialCounts={countsByCredId}
+            credentials={credentials || []}
+            onRefresh={handleRefresh}
+          />
 
           {/* Provider Cards */}
           {providersError ? (
@@ -201,7 +212,7 @@ export default function ApiKeysPage() {
             </Alert>
           ) : (
             <div className="grid gap-4">
-              {visibleProviders.map(provider => (
+              {visibleProviders.map((provider) => (
                 <ProviderSection
                   key={provider.name}
                   provider={provider}

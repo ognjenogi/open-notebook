@@ -7,6 +7,13 @@ import { useNotebookChat } from '@/lib/hooks/use-notebook-chat'
 // Mock the hooks
 vi.mock('@/lib/hooks/use-notes')
 vi.mock('@/lib/hooks/use-notebook-chat')
+vi.mock('@/lib/hooks/use-models', () => ({
+  useModelDefaults: () => ({ data: null, isLoading: false }),
+}))
+vi.mock('@/lib/hooks/use-notebooks', () => ({
+  useNotebook: () => ({ data: { id: 'test-notebook', model_id: null }, isLoading: false }),
+  useUpdateNotebook: () => ({ mutate: vi.fn() }),
+}))
 vi.mock('@/components/sources/ChatPanel', () => ({
   ChatPanel: () => <div data-testid="chat-panel" />
 }))

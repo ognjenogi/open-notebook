@@ -4,6 +4,16 @@ import ApiKeysPage from './page'
 import { ProviderInfo } from '@/lib/api/providers'
 import { Credential } from '@/lib/api/credentials'
 
+vi.mock('@tanstack/react-query', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@tanstack/react-query')>()
+  return {
+    ...actual,
+    useQueryClient: () => ({
+      invalidateQueries: vi.fn(),
+    }),
+  }
+})
+
 // useTranslation is mocked globally in setup.ts (t returns the key string)
 
 vi.mock('@/components/layout/AppShell', () => ({
@@ -16,6 +26,10 @@ vi.mock('@/components/settings', () => ({
   ProviderSection: ({ provider }: { provider: ProviderInfo }) => (
     <div data-testid="provider-section">{provider.display_name}</div>
   ),
+}))
+
+vi.mock('@/components/common/ModelFilterBar', () => ({
+  ModelFilterBar: () => <div data-testid="model-filter-bar" />,
 }))
 
 vi.mock('@/lib/hooks/use-models', () => ({

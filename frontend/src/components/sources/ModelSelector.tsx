@@ -10,7 +10,6 @@ import {
 } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
-import { Input } from '@/components/ui/input'
 import {
   Dialog,
   DialogContent,
@@ -25,6 +24,11 @@ import { useModelDefaults, useModels } from '@/lib/hooks/use-models'
 import { useCredentials } from '@/lib/hooks/use-credentials'
 import { useTranslation } from '@/lib/hooks/use-translation'
 import { LoadingSpinner } from '@/components/common/LoadingSpinner'
+import { ModelFilterBar } from '@/components/common/ModelFilterBar'
+import {
+  computeModelCredentialCounts,
+  filterModelsByCredentialAndSearch,
+} from '@/lib/utils/model-filter'
 
 interface ModelSelectorProps {
   currentModel?: string
@@ -32,10 +36,10 @@ interface ModelSelectorProps {
   disabled?: boolean
 }
 
-export function ModelSelector({ 
-  currentModel, 
+export function ModelSelector({
+  currentModel,
   onModelChange,
-  disabled = false 
+  disabled = false,
 }: ModelSelectorProps) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -46,6 +50,12 @@ export function ModelSelector({
   const { data: credentials, isLoading: credentialsLoading } = useCredentials()
   const isLoading = modelsLoading || credentialsLoading
   const { data: defaults } = useModelDefaults()
+
+  const openRouterCred = useMemo(() => {
+    return credentials?.find(
+      (c) => c.provider === 'openrouter' || c.name.toLowerCase().includes('openrouter')
+    )
+  }, [credentials])
 
   const credMap = useMemo(() => {
     const map = new Map<string, string>()
@@ -69,43 +79,48 @@ export function ModelSelector({
       .sort((a, b) => a.name.localeCompare(b.name))
   }, [models])
 
+  const { totalCount, countsByCredId } = useMemo(() => {
+    return computeModelCredentialCounts(languageModels, credentials)
+  }, [languageModels, credentials])
+
   const filteredLanguageModels = useMemo(() => {
-    return languageModels.filter((model) => {
-      const credName = model.credential ? credMap.get(model.credential) || '' : model.provider || ''
-      const query = search.trim().toLowerCase()
-      const matchesSearch =
-        !query ||
-        model.name.toLowerCase().includes(query) ||
-        credName.toLowerCase().includes(query) ||
-        model.provider.toLowerCase().includes(query)
-
-      const matchesCredential =
-        selectedCredential === 'all' || model.credential === selectedCredential
-
-      return matchesSearch && matchesCredential
-    })
-  }, [languageModels, search, selectedCredential, credMap])
+    return filterModelsByCredentialAndSearch(
+      languageModels,
+      search,
+      selectedCredential,
+      credMap,
+      openRouterCred?.id
+    )
+  }, [languageModels, search, selectedCredential, credMap, openRouterCred?.id])
 
   const defaultModel = useMemo(() => {
     if (!defaults?.default_chat_model) return undefined
-    return languageModels.find(model => model.id === defaults.default_chat_model)
+    return languageModels.find((model) => model.id === defaults.default_chat_model)
   }, [defaults?.default_chat_model, languageModels])
 
   const currentModelName = useMemo(() => {
     if (currentModel) {
-      const m = languageModels.find(model => model.id === currentModel)
+      const m = languageModels.find((model) => model.id === currentModel)
       if (m) {
-        const credName = m.credential ? credMap.get(m.credential) : m.provider
+        let credId = m.credential
+        if (!credId && m.provider === 'openrouter' && openRouterCred) {
+          credId = openRouterCred.id
+        }
+        const credName = credId ? credMap.get(credId) : m.provider
         return credName ? `${credName} · ${m.name}` : m.name
       }
       return currentModel
     }
     if (defaultModel) {
-      const credName = defaultModel.credential ? credMap.get(defaultModel.credential) : defaultModel.provider
+      let credId = defaultModel.credential
+      if (!credId && defaultModel.provider === 'openrouter' && openRouterCred) {
+        credId = openRouterCred.id
+      }
+      const credName = credId ? credMap.get(credId) : defaultModel.provider
       return credName ? `${credName} · ${defaultModel.name}` : defaultModel.name
     }
     return t('common.default')
-  }, [currentModel, languageModels, defaultModel, credMap, t])
+  }, [currentModel, languageModels, defaultModel, credMap, openRouterCred, t])
 
   const handleSave = () => {
     onModelChange(selectedModel === 'default' ? undefined : selectedModel)
@@ -123,76 +138,62 @@ export function ModelSelector({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button 
-          variant="outline" 
+        <Button
+          variant="outline"
           size="sm"
           disabled={disabled}
-          className="gap-2"
+          className="gap-2 cursor-pointer"
         >
           <Settings2 className="h-4 w-4" />
-          <span className="text-xs">
-            {currentModelName}
-          </span>
+          <span className="text-xs">{currentModelName}</span>
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[480px]">
+      <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Sparkles className="h-5 w-5" />
+            <Sparkles className="h-5 w-5 text-sky-400" />
             {t('common.modelConfiguration')}
           </DialogTitle>
           <DialogDescription>
             {t('transformations.overrideModelDesc')}
           </DialogDescription>
         </DialogHeader>
-        <div className="grid gap-4 py-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <div className="grid gap-1.5">
-              <Label htmlFor="model-search" className="text-xs">
-                {t('common.search') || 'Search'}
-              </Label>
-              <Input
-                id="model-search"
-                placeholder="Search models..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="h-9 text-xs"
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="credential-filter" className="text-xs">
-                {t('common.credential') || 'Credential'}
-              </Label>
-              <Select value={selectedCredential} onValueChange={setSelectedCredential}>
-                <SelectTrigger id="credential-filter" className="h-9 text-xs">
-                  <SelectValue placeholder="All Credentials" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Credentials</SelectItem>
-                  {credentials?.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
 
-          <div className="grid gap-2">
-            <Label htmlFor="model">{t('common.model')}</Label>
+        <div className="grid gap-4 py-3">
+          {/* Universal Model Filter Bar */}
+          <ModelFilterBar
+            searchQuery={search}
+            onSearchChange={setSearch}
+            selectedCredential={selectedCredential}
+            onCredentialChange={setSelectedCredential}
+            totalCount={totalCount}
+            credentialCounts={countsByCredId}
+            credentials={credentials || []}
+            compact
+          />
+
+          <div className="grid gap-1.5">
+            <Label htmlFor="model" className="text-xs">
+              {t('common.model')}
+            </Label>
             <Select value={selectedModel} onValueChange={setSelectedModel}>
               <SelectTrigger id="model">
                 <SelectValue placeholder={t('models.selectModelPlaceholder')} />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="max-h-[300px]">
                 <SelectItem value="default">
                   <div className="flex items-center justify-between w-full">
                     <span>
-                      {defaultModel 
+                      {defaultModel
                         ? (() => {
-                            const credName = defaultModel.credential ? credMap.get(defaultModel.credential) : defaultModel.provider
-                            const label = credName ? `${credName} · ${defaultModel.name}` : defaultModel.name
+                            let credId = defaultModel.credential
+                            if (!credId && defaultModel.provider === 'openrouter' && openRouterCred) {
+                              credId = openRouterCred.id
+                            }
+                            const credName = credId ? credMap.get(credId) : defaultModel.provider
+                            const label = credName
+                              ? `${credName} · ${defaultModel.name}`
+                              : defaultModel.name
                             return `${t('common.default')} (${label})`
                           })()
                         : t('transformations.systemDefault')}
@@ -209,12 +210,16 @@ export function ModelSelector({
                   </div>
                 ) : (
                   filteredLanguageModels.map((model) => {
-                    const credName = model.credential ? credMap.get(model.credential) : model.provider
+                    let credId = model.credential
+                    if (!credId && model.provider === 'openrouter' && openRouterCred) {
+                      credId = openRouterCred.id
+                    }
+                    const credName = credId ? credMap.get(credId) : model.provider
                     const optionLabel = credName ? `${credName} · ${model.name}` : model.name
                     return (
                       <SelectItem key={model.id} value={model.id}>
-                        <div className="flex items-center justify-between w-full">
-                          <span>{optionLabel}</span>
+                        <div className="flex items-center justify-between w-full gap-2">
+                          <span className="truncate">{optionLabel}</span>
                         </div>
                       </SelectItem>
                     )
@@ -223,21 +228,23 @@ export function ModelSelector({
               </SelectContent>
             </Select>
           </div>
+
           {selectedModel && selectedModel !== 'default' && (
-            <div className="rounded-lg bg-muted p-3">
-              <p className="text-sm text-muted-foreground">
-                {t('transformations.sessionUseReplacement', { name: languageModels.find(m => m.id === selectedModel)?.name || selectedModel })}
+            <div className="rounded-lg bg-muted p-2.5">
+              <p className="text-xs text-muted-foreground">
+                {t('transformations.sessionUseReplacement', {
+                  name: languageModels.find((m) => m.id === selectedModel)?.name || selectedModel,
+                })}
               </p>
             </div>
           )}
         </div>
+
         <DialogFooter className="flex justify-between">
           <Button variant="outline" onClick={handleReset}>
             {t('common.resetToDefault')}
           </Button>
-          <Button onClick={handleSave}>
-            {t('common.saveChanges')}
-          </Button>
+          <Button onClick={handleSave}>{t('common.saveChanges')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
