@@ -91,7 +91,7 @@ export function AppSidebar() {
   const navigation = getNavigation(t)
   const pathname = usePathname()
   const { logout } = useAuth()
-  const { isCollapsed, toggleCollapse } = useSidebarStore()
+  const { isCollapsed, toggleCollapse, setCollapsed } = useSidebarStore()
   const { openSourceDialog, openNotebookDialog, openPodcastDialog } = useCreateDialogs()
 
   // The active item is the longest href that prefixes the current path.
@@ -106,10 +106,13 @@ export function AppSidebar() {
   const [createMenuOpen, setCreateMenuOpen] = useState(false)
   const [isMac, setIsMac] = useState(true) // Default to Mac for SSR
 
-  // Detect platform for keyboard shortcut display
+  // Detect platform for keyboard shortcut display and collapse sidebar on mobile
   useEffect(() => {
     setIsMac(navigator.platform.toLowerCase().includes('mac'))
-  }, [])
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      setCollapsed(true)
+    }
+  }, [setCollapsed])
 
   const handleCreateSelection = (target: CreateTarget) => {
     setCreateMenuOpen(false)
