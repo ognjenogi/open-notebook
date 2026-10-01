@@ -20,6 +20,8 @@ import { SessionManager } from '@/components/sources/SessionManager'
 import { MessageActions } from '@/components/sources/MessageActions'
 import { convertReferencesToCompactMarkdown, createCompactReferenceLinkComponent } from '@/lib/utils/source-references'
 import { useModalManager } from '@/lib/hooks/use-modal-manager'
+import { useNotebook, useUpdateNotebook } from '@/lib/hooks/use-notebooks'
+import { useModelDefaults } from '@/lib/hooks/use-models'
 import { toast } from 'sonner'
 import { useTranslation } from '@/lib/hooks/use-translation'
 
@@ -79,6 +81,25 @@ export function ChatPanel({
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const { openModal } = useModalManager()
+
+  const isNotebookContext = contextType === 'notebook' && !!notebookId
+  const { data: notebook } = useNotebook(isNotebookContext ? notebookId! : '')
+  const updateNotebook = useUpdateNotebook()
+  const { data: defaults } = useModelDefaults()
+
+  const effectiveModel = isNotebookContext
+    ? (modelOverride ?? notebook?.model_id ?? defaults?.default_chat_model ?? undefined)
+    : modelOverride
+
+  const handleModelChange = useCallback((newModelId?: string) => {
+    if (isNotebookContext && notebookId) {
+      updateNotebook.mutate({
+        id: notebookId,
+        model_id: newModelId ?? null,
+      })
+    }
+    onModelChange?.(newModelId)
+  }, [isNotebookContext, notebookId, updateNotebook, onModelChange])
 
   // Stable reference-click handler so memoized messages don't re-render on
   // composer keystrokes (which no longer re-render this component at all, since
@@ -219,8 +240,8 @@ export function ChatPanel({
         <ChatComposer
           onSendMessage={onSendMessage}
           isStreaming={isStreaming}
-          modelOverride={modelOverride}
-          onModelChange={onModelChange}
+          modelOverride={effectiveModel}
+          onModelChange={onModelChange ? handleModelChange : undefined}
         />
       </CardContent>
     </Card>

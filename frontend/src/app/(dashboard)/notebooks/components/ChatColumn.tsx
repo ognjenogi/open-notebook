@@ -2,6 +2,8 @@
 
 import { useMemo } from 'react'
 import { useNotebookChat } from '@/lib/hooks/use-notebook-chat'
+import { useNotebook, useUpdateNotebook } from '@/lib/hooks/use-notebooks'
+import { useModelDefaults } from '@/lib/hooks/use-models'
 import { useNotes } from '@/lib/hooks/use-notes'
 import { ChatPanel } from '@/components/sources/ChatPanel'
 import { LoadingSpinner } from '@/components/common/LoadingSpinner'
@@ -20,6 +22,9 @@ interface ChatColumnProps {
 
 export function ChatColumn({ notebookId, contextSelections, sources, sourcesLoading }: ChatColumnProps) {
   const { t } = useTranslation()
+  const { data: notebook } = useNotebook(notebookId)
+  const updateNotebook = useUpdateNotebook()
+  const { data: defaults } = useModelDefaults()
 
   // Fetch notes for this notebook
   const { data: notes = [], isLoading: notesLoading } = useNotes(notebookId)
@@ -91,6 +96,15 @@ export function ChatColumn({ notebookId, contextSelections, sources, sourcesLoad
     )
   }
 
+  const notebookModel = notebook?.model_id ?? defaults?.default_chat_model
+  const currentModel = chat.currentSession?.model_override ?? chat.pendingModelOverride ?? notebookModel ?? undefined
+
+  const handleModelChange = (model?: string) => {
+    const newModelId = model ?? null
+    updateNotebook.mutate({ id: notebookId, model_id: newModelId })
+    chat.setModelOverride(newModelId)
+  }
+
   return (
     <ChatPanel
       title={t('chat.chatWithNotebook')}
@@ -98,9 +112,9 @@ export function ChatColumn({ notebookId, contextSelections, sources, sourcesLoad
       messages={chat.messages}
       isStreaming={chat.isSending}
       contextIndicators={null}
-      onSendMessage={(message, modelOverride) => chat.sendMessage(message, modelOverride)}
-      modelOverride={chat.currentSession?.model_override ?? chat.pendingModelOverride ?? undefined}
-      onModelChange={(model) => chat.setModelOverride(model ?? null)}
+      onSendMessage={(message, modelOverride) => chat.sendMessage(message, modelOverride ?? currentModel)}
+      modelOverride={currentModel}
+      onModelChange={handleModelChange}
       sessions={chat.sessions}
       currentSessionId={chat.currentSessionId}
       onCreateSession={(title) => chat.createSession(title)}

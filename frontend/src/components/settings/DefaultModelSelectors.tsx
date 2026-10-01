@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useId } from 'react'
+import { useState, useEffect, useId, useMemo } from 'react'
 import { useForm } from 'react-hook-form'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Loader2, X, AlertCircle, Wand2 } from 'lucide-react'
 import { useTranslation } from '@/lib/hooks/use-translation'
 import { useUpdateModelDefaults, useAutoAssignDefaults } from '@/lib/hooks/use-models'
+import { useCredentials } from '@/lib/hooks/use-credentials'
 import { Model, ModelDefaults } from '@/lib/types/models'
 import { ModelType } from '@/lib/providers'
 import { EmbeddingModelChangeDialog } from './EmbeddingModelChangeDialog'
@@ -36,6 +37,7 @@ interface DefaultModelSelectProps {
   showDescription?: boolean
   /** Name of the currently selected chat model, used for the fallback hint. */
   chatModelName?: string
+  credMap: Map<string, string>
 }
 
 function DefaultModelSelect({
@@ -45,6 +47,7 @@ function DefaultModelSelect({
   onChange,
   showDescription,
   chatModelName,
+  credMap,
 }: DefaultModelSelectProps) {
   const { t } = useTranslation()
   const isValid = currentValue && available.some(m => m.id === currentValue)
@@ -92,14 +95,23 @@ function DefaultModelSelect({
                 </span>
               </SelectItem>
             )}
-            {available.sort((a, b) => a.name.localeCompare(b.name)).map(model => (
-              <SelectItem key={model.id} value={model.id}>
-                <div className="flex items-center justify-between w-full">
-                  <span>{model.name}</span>
-                  <span className="text-xs text-muted-foreground ml-2">{model.provider}</span>
-                </div>
-              </SelectItem>
-            ))}
+            {available.sort((a, b) => {
+              const credA = a.credential ? credMap.get(a.credential) || a.provider : a.provider
+              const credB = b.credential ? credMap.get(b.credential) || b.provider : b.provider
+              const labelA = `${credA} · ${a.name}`
+              const labelB = `${credB} · ${b.name}`
+              return labelA.localeCompare(labelB)
+            }).map(model => {
+              const credName = model.credential ? credMap.get(model.credential) : model.provider
+              const optionLabel = credName ? `${credName} · ${model.name}` : model.name
+              return (
+                <SelectItem key={model.id} value={model.id}>
+                  <div className="flex items-center justify-between w-full">
+                    <span>{optionLabel}</span>
+                  </div>
+                </SelectItem>
+              )
+            })}
           </SelectContent>
         </Select>
         {!config.required && currentValue && (
@@ -132,6 +144,14 @@ export function DefaultModelSelectors({
   const autoAssign = useAutoAssignDefaults()
   const { setValue, watch } = useForm<ModelDefaults>({ defaultValues: defaults })
   const generatedId = useId()
+  const { data: credentials } = useCredentials()
+  const credMap = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const c of credentials || []) {
+      map.set(c.id, c.name)
+    }
+    return map
+  }, [credentials])
 
   const [showEmbeddingDialog, setShowEmbeddingDialog] = useState(false)
   const [pendingEmbeddingChange, setPendingEmbeddingChange] = useState<{
@@ -182,7 +202,13 @@ export function DefaultModelSelectors({
 
   const getModelsForType = (type: ModelType) => models.filter(m => m.type === type)
 
-  const chatModelName = models.find(m => m.id === watch('default_chat_model'))?.name
+  const selectedChatModel = models.find(m => m.id === watch('default_chat_model'))
+  const chatModelName = selectedChatModel
+    ? (() => {
+        const credName = selectedChatModel.credential ? credMap.get(selectedChatModel.credential) : selectedChatModel.provider
+        return credName ? `${credName} · ${selectedChatModel.name}` : selectedChatModel.name
+      })()
+    : undefined
 
   const missingRequired = defaultConfigs
     .filter(c => {
@@ -228,6 +254,7 @@ export function DefaultModelSelectors({
               currentValue={watch(config.key) || undefined}
               onChange={handleChange}
               chatModelName={chatModelName}
+              credMap={credMap}
             />
           ))}
         </div>
@@ -245,6 +272,7 @@ export function DefaultModelSelectors({
                   onChange={handleChange}
                   showDescription
                   chatModelName={chatModelName}
+                  credMap={credMap}
                 />
               ))}
             </div>

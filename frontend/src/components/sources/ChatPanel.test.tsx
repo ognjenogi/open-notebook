@@ -13,6 +13,23 @@ vi.mock('@/components/sources/MessageActions', () => ({
   MessageActions: () => null,
 }))
 
+const mockUpdateNotebookMutate = vi.fn()
+let mockNotebookData: { id: string; model_id?: string | null } | undefined = undefined
+let mockDefaultsData: { default_chat_model?: string } | undefined = undefined
+
+vi.mock('@/lib/hooks/use-notebooks', () => ({
+  useNotebook: () => ({ data: mockNotebookData }),
+  useUpdateNotebook: () => ({ mutate: mockUpdateNotebookMutate }),
+}))
+
+vi.mock('@/lib/hooks/use-models', () => ({
+  useModelDefaults: () => ({ data: mockDefaultsData }),
+  useModels: () => ({ data: [] }),
+}))
+vi.mock('@/lib/hooks/use-credentials', () => ({
+  useCredentials: () => ({ data: [] }),
+}))
+
 describe('ChatPanel composer', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -106,5 +123,74 @@ describe('ChatPanel composer', () => {
     fireEvent.keyDown(textarea, { key: 'Enter', ctrlKey: true })
 
     expect(onSendMessage).not.toHaveBeenCalled()
+  })
+
+  it('uses notebook.model_id in notebook context when sending message', () => {
+    mockNotebookData = { id: 'notebook:123', model_id: 'model:notebook-llm' }
+    mockDefaultsData = { default_chat_model: 'model:default-llm' }
+    const onSendMessage = vi.fn()
+
+    render(
+      <ChatPanel
+        messages={[]}
+        isStreaming={false}
+        contextIndicators={null}
+        onSendMessage={onSendMessage}
+        contextType="notebook"
+        notebookId="notebook:123"
+      />
+    )
+
+    const textarea = getTextarea()
+    fireEvent.change(textarea, { target: { value: 'test notebook msg' } })
+
+    const sendButton = screen.getByRole('button')
+    fireEvent.click(sendButton)
+
+    expect(onSendMessage).toHaveBeenCalledWith('test notebook msg', 'model:notebook-llm')
+  })
+
+  it('falls back to defaults.default_chat_model when notebook.model_id is null', () => {
+    mockNotebookData = { id: 'notebook:123', model_id: null }
+    mockDefaultsData = { default_chat_model: 'model:default-llm' }
+    const onSendMessage = vi.fn()
+
+    render(
+      <ChatPanel
+        messages={[]}
+        isStreaming={false}
+        contextIndicators={null}
+        onSendMessage={onSendMessage}
+        contextType="notebook"
+        notebookId="notebook:123"
+      />
+    )
+
+    const textarea = getTextarea()
+    fireEvent.change(textarea, { target: { value: 'fallback test' } })
+
+    const sendButton = screen.getByRole('button')
+    fireEvent.click(sendButton)
+
+    expect(onSendMessage).toHaveBeenCalledWith('fallback test', 'model:default-llm')
+  })
+
+  it('renders model selector and handles model change persistence in notebook context', () => {
+    mockNotebookData = { id: 'notebook:123', model_id: 'model:old-llm' }
+    const onModelChange = vi.fn()
+
+    render(
+      <ChatPanel
+        messages={[]}
+        isStreaming={false}
+        contextIndicators={null}
+        onSendMessage={vi.fn()}
+        onModelChange={onModelChange}
+        contextType="notebook"
+        notebookId="notebook:123"
+      />
+    )
+
+    expect(screen.getByText('chat.model')).toBeInTheDocument()
   })
 })

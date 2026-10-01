@@ -115,6 +115,7 @@ async def get_notebooks(
                 updated=str(nb.get("updated", "")),
                 source_count=nb.get("source_count", 0),
                 note_count=nb.get("note_count", 0),
+                model_id=nb.get("model_id"),
             )
             for nb in result
         ]
@@ -136,6 +137,7 @@ async def create_notebook(notebook: NotebookCreate):
         new_notebook = Notebook(
             name=notebook.name,
             description=notebook.description,
+            model_id=notebook.model_id,
         )
         await new_notebook.save()
 
@@ -148,6 +150,7 @@ async def create_notebook(notebook: NotebookCreate):
             updated=str(new_notebook.updated),
             source_count=0,  # New notebook has no sources
             note_count=0,  # New notebook has no notes
+            model_id=new_notebook.model_id,
         )
     except InvalidInputError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -267,6 +270,7 @@ async def get_notebook(notebook_id: str):
             updated=str(nb.get("updated", "")),
             source_count=nb.get("source_count", 0),
             note_count=nb.get("note_count", 0),
+            model_id=nb.get("model_id"),
         )
     except HTTPException:
         raise
@@ -292,6 +296,8 @@ async def update_notebook(notebook_id: str, notebook_update: NotebookUpdate):
             notebook.description = notebook_update.description
         if notebook_update.archived is not None:
             notebook.archived = notebook_update.archived
+        if "model_id" in notebook_update.model_fields_set:
+            notebook.model_id = notebook_update.model_id
 
         await notebook.save()
 
@@ -315,6 +321,7 @@ async def update_notebook(notebook_id: str, notebook_update: NotebookUpdate):
                 updated=str(nb.get("updated", "")),
                 source_count=nb.get("source_count", 0),
                 note_count=nb.get("note_count", 0),
+                model_id=nb.get("model_id"),
             )
 
         # Fallback if query fails
@@ -327,6 +334,7 @@ async def update_notebook(notebook_id: str, notebook_update: NotebookUpdate):
             updated=str(notebook.updated),
             source_count=0,
             note_count=0,
+            model_id=notebook.model_id,
         )
     except HTTPException:
         raise

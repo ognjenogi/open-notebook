@@ -7,6 +7,7 @@ export interface NotebookResponse {
   updated: string
   source_count: number
   note_count: number
+  model_id?: string | null
 }
 
 export interface NoteResponse {
@@ -72,12 +73,14 @@ export interface Capabilities {
 export interface CreateNotebookRequest {
   name: string
   description?: string
+  model_id?: string | null
 }
 
 export interface UpdateNotebookRequest {
   name?: string
   description?: string
   archived?: boolean
+  model_id?: string | null
 }
 
 export interface NotebookDeletePreview {

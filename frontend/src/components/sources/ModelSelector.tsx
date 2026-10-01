@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { Input } from '@/components/ui/input'
 import {
   Dialog,
   DialogContent,
@@ -39,6 +40,8 @@ export function ModelSelector({
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [selectedModel, setSelectedModel] = useState(currentModel || 'default')
+  const [search, setSearch] = useState('')
+  const [selectedCredential, setSelectedCredential] = useState('all')
   const { data: models, isLoading: modelsLoading } = useModels()
   const { data: credentials, isLoading: credentialsLoading } = useCredentials()
   const isLoading = modelsLoading || credentialsLoading
@@ -65,6 +68,23 @@ export function ModelSelector({
       .filter((model) => model.type === 'language')
       .sort((a, b) => a.name.localeCompare(b.name))
   }, [models])
+
+  const filteredLanguageModels = useMemo(() => {
+    return languageModels.filter((model) => {
+      const credName = model.credential ? credMap.get(model.credential) || '' : model.provider || ''
+      const query = search.trim().toLowerCase()
+      const matchesSearch =
+        !query ||
+        model.name.toLowerCase().includes(query) ||
+        credName.toLowerCase().includes(query) ||
+        model.provider.toLowerCase().includes(query)
+
+      const matchesCredential =
+        selectedCredential === 'all' || model.credential === selectedCredential
+
+      return matchesSearch && matchesCredential
+    })
+  }, [languageModels, search, selectedCredential, credMap])
 
   const defaultModel = useMemo(() => {
     if (!defaults?.default_chat_model) return undefined
@@ -94,6 +114,8 @@ export function ModelSelector({
 
   const handleReset = () => {
     setSelectedModel('default')
+    setSearch('')
+    setSelectedCredential('all')
     onModelChange(undefined)
     setOpen(false)
   }
@@ -113,7 +135,7 @@ export function ModelSelector({
           </span>
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent className="sm:max-w-[480px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-5 w-5" />
@@ -124,6 +146,39 @@ export function ModelSelector({
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="grid gap-1.5">
+              <Label htmlFor="model-search" className="text-xs">
+                {t('common.search') || 'Search'}
+              </Label>
+              <Input
+                id="model-search"
+                placeholder="Search models..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="h-9 text-xs"
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="credential-filter" className="text-xs">
+                {t('common.credential') || 'Credential'}
+              </Label>
+              <Select value={selectedCredential} onValueChange={setSelectedCredential}>
+                <SelectTrigger id="credential-filter" className="h-9 text-xs">
+                  <SelectValue placeholder="All Credentials" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Credentials</SelectItem>
+                  {credentials?.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
           <div className="grid gap-2">
             <Label htmlFor="model">{t('common.model')}</Label>
             <Select value={selectedModel} onValueChange={setSelectedModel}>
@@ -148,8 +203,12 @@ export function ModelSelector({
                   <div className="flex items-center justify-center py-2">
                     <LoadingSpinner size="sm" />
                   </div>
+                ) : filteredLanguageModels.length === 0 ? (
+                  <div className="text-sm text-muted-foreground py-2 px-2 text-center">
+                    {t('common.noResults') || 'No models found'}
+                  </div>
                 ) : (
-                  languageModels.map((model) => {
+                  filteredLanguageModels.map((model) => {
                     const credName = model.credential ? credMap.get(model.credential) : model.provider
                     const optionLabel = credName ? `${credName} · ${model.name}` : model.name
                     return (

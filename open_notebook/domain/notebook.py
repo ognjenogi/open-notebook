@@ -19,10 +19,12 @@ from open_notebook.exceptions import (
 
 class Notebook(ObjectModel):
     table_name: ClassVar[str] = "notebook"
+    nullable_fields: ClassVar[set[str]] = {"model_id"}
     name: str
     description: str
     archived: Optional[bool] = False
     last_viewed_at: Optional[datetime] = None
+    model_id: Optional[str] = None
 
     @field_validator("name")
     @classmethod

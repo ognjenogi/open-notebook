@@ -51,8 +51,29 @@ export function useUpdateNotebook() {
   const { t } = useTranslation()
 
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: UpdateNotebookRequest }) =>
-      notebooksApi.update(id, data),
+    mutationFn: ({
+      id,
+      data,
+      name,
+      description,
+      archived,
+      model_id,
+    }: {
+      id: string
+      data?: UpdateNotebookRequest
+      name?: string
+      description?: string
+      archived?: boolean
+      model_id?: string | null
+    }) => {
+      const payload: UpdateNotebookRequest = data ?? {
+        name,
+        description,
+        archived,
+        model_id,
+      }
+      return notebooksApi.update(id, payload)
+    },
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.notebooks })
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.notebook(id) })
