@@ -43,3 +43,12 @@ The token is validated by an actual API call (`/notebooks`), not JWT decoding, w
 ## Error handling
 
 `getApiErrorMessage()` (`lib/utils/error-handler.ts`) tries an i18n mapping first, then falls back to the backend's descriptive message — which the backend error-classification system already makes user-friendly (see [architecture.md](architecture.md)). Mutations surface errors as toasts; an app-level ErrorBoundary catches render errors.
+
+## Mobile & PWA Layout
+
+- **PWA Manifest & Icons**: Generated via `src/app/manifest.ts` with `display: standalone` and icons in `public/` (`icon-192.png`, `icon-512.png`, `apple-touch-icon.png`).
+- **Responsive Layout**:
+  - Desktop: Left collapsible sidebar (`hidden md:flex`).
+  - Mobile: Full 100% screen width dedicated to content, with desktop sidebar hidden.
+  - Navigation on Mobile: Fixed bottom bar (`md:hidden`) for primary routes (`/notebooks`, `/sources`, `+ Create`, `/search`, `Menu`), plus an off-canvas slide-out drawer for full navigation, settings, and theme toggles.
+  - Viewport: Dynamic viewport height (`100dvh`), safe-area padding (`env(safe-area-inset-bottom)`), and `overflow-x-hidden` on body to prevent unintended mobile zoom reflows.
