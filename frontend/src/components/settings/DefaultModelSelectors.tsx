@@ -1,24 +1,19 @@
 'use client'
 
-import { useState, useEffect, useId, useMemo } from 'react'
+import { useState, useEffect, useId } from 'react'
 import { useForm } from 'react-hook-form'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import { Loader2, X, AlertCircle, Wand2 } from 'lucide-react'
 import { useTranslation } from '@/lib/hooks/use-translation'
 import { useUpdateModelDefaults, useAutoAssignDefaults } from '@/lib/hooks/use-models'
-import { useCredentials } from '@/lib/hooks/use-credentials'
 import { Model, ModelDefaults } from '@/lib/types/models'
 import { ModelType } from '@/lib/providers'
 import { EmbeddingModelChangeDialog } from './EmbeddingModelChangeDialog'
-import { ModelFilterBar } from '@/components/common/ModelFilterBar'
-import {
-  computeModelCredentialCounts,
-  filterModelsByCredentialAndSearch,
-} from '@/lib/utils/model-filter'
+import { ModelPickerPopover } from '@/components/common/ModelPickerPopover'
+import { cn } from '@/lib/utils'
 
 interface DefaultConfig {
   key: keyof ModelDefaults
@@ -31,46 +26,28 @@ interface DefaultConfig {
   id: string
 }
 
-// Radix Select reserves "" for "no selection", so the clear option needs a sentinel.
-const NONE_VALUE = '__none__'
-
 interface DefaultModelSelectProps {
   config: DefaultConfig
-  available: Model[]
   allModels: Model[]
   currentValue?: string
   onChange: (key: keyof ModelDefaults, value: string) => void
   showDescription?: boolean
   /** Name of the currently selected chat model, used for the fallback hint. */
   chatModelName?: string
-  credMap: Map<string, string>
 }
 
 function DefaultModelSelect({
   config,
-  available,
   allModels,
   currentValue,
   onChange,
   showDescription,
   chatModelName,
-  credMap,
 }: DefaultModelSelectProps) {
   const { t } = useTranslation()
   const isValid = currentValue && allModels.some((m) => m.id === currentValue)
+  const typeModels = allModels.filter((m) => m.type === config.modelType)
 
-  const displayModels = useMemo(() => {
-    if (currentValue && !available.some((m) => m.id === currentValue)) {
-      const current = allModels.find((m) => m.id === currentValue)
-      if (current) {
-        return [current, ...available]
-      }
-    }
-    return available
-  }, [available, currentValue, allModels])
-
-  // Hint shown when an optional slot is left empty, clarifying the effective
-  // behavior (chat-model fallback vs. feature unavailable) — see #1098.
   const emptyOptionalHint = (() => {
     if (config.required || currentValue) return null
     if (config.fallsBackToChat) {
@@ -90,59 +67,32 @@ function DefaultModelSelect({
         {config.required && <span className="text-destructive ml-0.5">*</span>}
       </Label>
       <div className="flex gap-1">
-        <Select
-          value={currentValue || (config.required ? '' : NONE_VALUE)}
-          onValueChange={(v) => onChange(config.key, v === NONE_VALUE ? '' : v)}
-        >
-          <SelectTrigger
-            id={config.id}
-            className={`h-8 text-xs ${
-              config.required && !isValid && available.length > 0 ? 'border-destructive' : ''
-            }`}
-          >
-            <SelectValue
-              placeholder={
-                config.required && !isValid && available.length > 0
-                  ? t('models.requiredModelPlaceholder')
-                  : t('models.selectModelPlaceholder')
-              }
-            />
-          </SelectTrigger>
-          <SelectContent className="max-h-[300px]">
-            {!config.required && (
-              <SelectItem value={NONE_VALUE}>
-                <span className="text-muted-foreground">
-                  {config.fallsBackToChat ? t('models.noneFallbackToChat') : t('models.noneOption')}
-                </span>
-              </SelectItem>
-            )}
-            {displayModels
-              .sort((a, b) => {
-                const credA = a.credential ? credMap.get(a.credential) || a.provider : a.provider
-                const credB = b.credential ? credMap.get(b.credential) || b.provider : b.provider
-                const labelA = `${credA} · ${a.name}`
-                const labelB = `${credB} · ${b.name}`
-                return labelA.localeCompare(labelB)
-              })
-              .map((model) => {
-                const credName = model.credential ? credMap.get(model.credential) : model.provider
-                const optionLabel = credName ? `${credName} · ${model.name}` : model.name
-                return (
-                  <SelectItem key={model.id} value={model.id}>
-                    <div className="flex items-center justify-between w-full">
-                      <span>{optionLabel}</span>
-                    </div>
-                  </SelectItem>
-                )
-              })}
-          </SelectContent>
-        </Select>
+        <ModelPickerPopover
+          value={currentValue}
+          onChange={(val) => onChange(config.key, val || '')}
+          modelType={config.modelType}
+          models={allModels}
+          size="sm"
+          allowNone={!config.required}
+          noneLabel={config.fallsBackToChat ? t('models.noneFallbackToChat') : t('models.noneOption')}
+          placeholder={
+            config.required && !isValid && typeModels.length > 0
+              ? t('models.requiredModelPlaceholder')
+              : t('models.selectModelPlaceholder')
+          }
+          className={cn(
+            'w-full',
+            config.required && !isValid && typeModels.length > 0 && 'border-destructive'
+          )}
+        />
         {!config.required && currentValue && (
           <Button
             variant="ghost"
             size="icon"
             onClick={() => onChange(config.key, '')}
             className="h-8 w-8 shrink-0 cursor-pointer"
+            title="Clear model"
+            type="button"
           >
             <X className="h-3 w-3" />
           </Button>
@@ -169,27 +119,6 @@ export function DefaultModelSelectors({ models, defaults }: DefaultModelSelector
   const autoAssign = useAutoAssignDefaults()
   const { setValue, watch } = useForm<ModelDefaults>({ defaultValues: defaults })
   const generatedId = useId()
-  const { data: credentials } = useCredentials()
-  const [search, setSearch] = useState('')
-  const [selectedCredential, setSelectedCredential] = useState('all')
-
-  const openRouterCred = useMemo(() => {
-    return credentials?.find(
-      (c) => c.provider === 'openrouter' || c.name.toLowerCase().includes('openrouter')
-    )
-  }, [credentials])
-
-  const credMap = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const c of credentials || []) {
-      map.set(c.id, c.name)
-    }
-    return map
-  }, [credentials])
-
-  const { totalCount, countsByCredId } = useMemo(() => {
-    return computeModelCredentialCounts(models, credentials)
-  }, [models, credentials])
 
   const [showEmbeddingDialog, setShowEmbeddingDialog] = useState(false)
   const [pendingEmbeddingChange, setPendingEmbeddingChange] = useState<{
@@ -288,28 +217,8 @@ export function DefaultModelSelectors({ models, defaults }: DefaultModelSelector
     }
   }
 
-  const getModelsForType = (type: ModelType) => {
-    const typeModels = models.filter((m) => m.type === type)
-    return filterModelsByCredentialAndSearch(
-      typeModels,
-      search,
-      selectedCredential,
-      credMap,
-      openRouterCred?.id
-    )
-  }
-
   const selectedChatModel = models.find((m) => m.id === watch('default_chat_model'))
-  const chatModelName = selectedChatModel
-    ? (() => {
-        let credId = selectedChatModel.credential
-        if (!credId && selectedChatModel.provider === 'openrouter' && openRouterCred) {
-          credId = openRouterCred.id
-        }
-        const credName = credId ? credMap.get(credId) : selectedChatModel.provider
-        return credName ? `${credName} · ${selectedChatModel.name}` : selectedChatModel.name
-      })()
-    : undefined
+  const chatModelName = selectedChatModel?.name
 
   const missingRequired = defaultConfigs
     .filter((c) => {
@@ -350,30 +259,16 @@ export function DefaultModelSelectors({ models, defaults }: DefaultModelSelector
           </Alert>
         )}
 
-        {/* Filter Bar for Default Model Selectors */}
-        <ModelFilterBar
-          searchQuery={search}
-          onSearchChange={setSearch}
-          selectedCredential={selectedCredential}
-          onCredentialChange={setSelectedCredential}
-          totalCount={totalCount}
-          credentialCounts={countsByCredId}
-          credentials={credentials || []}
-          compact
-        />
-
         {/* Primary models: Chat, Embedding, TTS, STT */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {primaryConfigs.map((config) => (
             <DefaultModelSelect
               key={config.key}
               config={config}
-              available={getModelsForType(config.modelType)}
               allModels={models}
               currentValue={watch(config.key) || undefined}
               onChange={handleChange}
               chatModelName={chatModelName}
-              credMap={credMap}
             />
           ))}
         </div>
@@ -386,13 +281,11 @@ export function DefaultModelSelectors({ models, defaults }: DefaultModelSelector
               <DefaultModelSelect
                 key={config.key}
                 config={config}
-                available={getModelsForType(config.modelType)}
                 allModels={models}
                 currentValue={watch(config.key) || undefined}
                 onChange={handleChange}
                 showDescription
                 chatModelName={chatModelName}
-                credMap={credMap}
               />
             ))}
           </div>
