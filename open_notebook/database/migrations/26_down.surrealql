@@ -1,0 +1,2 @@
+-- Migration 26 down: Remove model_id from notebook table
+REMOVE FIELD IF EXISTS model_id ON TABLE notebook;

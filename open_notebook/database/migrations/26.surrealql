@@ -1,0 +1,2 @@
+-- Migration 26: Add model_id to notebook table for per-notebook model persistence
+DEFINE FIELD IF NOT EXISTS model_id ON TABLE notebook TYPE option<string>;
