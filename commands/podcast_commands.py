@@ -223,9 +223,20 @@ async def generate_podcast_command(
                 del episode_profiles_dict[ep_name]
 
         # Resolve TTS for ALL speaker profiles (podcast-creator validates all).
-        # Remove profiles that fail resolution to prevent validation errors.
+        # Drop profiles that lack a voice model or fail resolution so one
+        # stale profile can't fail validation for the whole config. The
+        # requested profile was validated above — its failures raise.
         for sp_name in list(speaker_profiles_dict.keys()):
             sp_dict = speaker_profiles_dict[sp_name]
+            if not sp_dict.get("voice_model"):
+                if sp_name == speaker_profile.name:
+                    continue
+                logger.warning(
+                    f"Speaker profile '{sp_name}' has no voice model, "
+                    "removing from config to prevent validation errors"
+                )
+                del speaker_profiles_dict[sp_name]
+                continue
             if sp_dict.get("voice_model"):
                 try:
                     prov, model, conf = await _resolve_model_config(
@@ -235,6 +246,8 @@ async def generate_podcast_command(
                     sp_dict["tts_model"] = model
                     sp_dict["tts_config"] = conf
                 except Exception as e:
+                    if sp_name == speaker_profile.name:
+                        raise
                     logger.warning(
                         f"Failed to resolve TTS for speaker profile '{sp_name}', "
                         f"removing from config to prevent validation errors: {e}"

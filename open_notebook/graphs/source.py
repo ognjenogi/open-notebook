@@ -1,6 +1,7 @@
+import asyncio
 import operator
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 from content_core import ContentCoreConfig, extract_content
 from content_core.common import ExtractionOutput
@@ -73,6 +74,45 @@ def _usable_engine(engine: str, kind: str) -> str:
         f"Set {missing_env_var}=true to enable it (see ADR-007)."
     )
     return "auto"
+
+
+T = TypeVar("T")
+
+
+async def _run_blocking(fn: Callable[..., T], *args: Any) -> T:
+    return await asyncio.to_thread(fn, *args)
+
+
+async def get_stt_model():
+    """Provisioned default speech-to-text model (with credentials), or None."""
+    try:
+        from open_notebook.ai.models import ModelManager
+
+        return await ModelManager().get_speech_to_text()
+    except Exception as e:
+        logger.warning(f"STT model unavailable: {e}")
+        return None
+
+
+def download_youtube_audio(url: str) -> Optional[str]:
+    """Download audio-only track of a YouTube video to a temp file.
+
+    Returns the file path, or None when the download fails. Callers unlink.
+    """
+    try:
+        import tempfile
+
+        from pytubefix import YouTube
+
+        yt = YouTube(url)
+        stream = yt.streams.filter(only_audio=True).order_by("abr").desc().first()
+        if stream is None:
+            return None
+        tmpdir = tempfile.mkdtemp(prefix="onb-yt-")
+        return stream.download(output_path=tmpdir, filename="audio.mp4")
+    except Exception as e:
+        logger.warning(f"YouTube audio download failed for {url}: {e}")
+        return None
 
 
 async def content_process(state: SourceState) -> dict:
@@ -172,16 +212,49 @@ async def content_process(state: SourceState) -> dict:
     if not processed.content or not processed.content.strip():
         url = content_state.get("url") or ""
         if url and ("youtube.com" in url or "youtu.be" in url):
+            # Captions missing — fall back to audio download + STT instead
+            # of failing. The configured default STT carries credentials.
+            transcript = await transcribe_youtube_audio(url)
+            if transcript:
+                return {
+                    "extraction": ExtractionOutput(
+                        title=processed.title or url,
+                        content=transcript,
+                        metadata=dict(processed.metadata or {}),
+                    )
+                }
             raise ValueError(
                 "Could not extract content from this YouTube video. "
-                "No transcript or subtitles are available. "
-                "Try configuring a Speech-to-Text model in Settings "
-                "to transcribe the audio instead."
+                "No transcript or subtitles are available and audio "
+                "transcription failed. Try configuring a Speech-to-Text "
+                "model in Settings to transcribe the audio instead."
             )
         raise ValueError(
             "Could not extract any text content from this source. "
             "The content may be empty, inaccessible, or in an unsupported format."
         )
+
+
+async def transcribe_youtube_audio(url: str) -> Optional[str]:
+    """Best-effort YouTube audio transcription. Returns text or None."""
+    stt = await get_stt_model()
+    if stt is None:
+        return None
+    path = await _run_blocking(download_youtube_audio, url)
+    if not path:
+        return None
+    try:
+        result = await stt.atranscribe(path)
+        text = (getattr(result, "text", "") or "").strip()
+        return text or None
+    except Exception as e:
+        logger.warning(f"YouTube audio transcription failed for {url}: {e}")
+        return None
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
     # content-core 2.x no longer deletes the uploaded source file after
     # extraction (the delete_source flag it used to honor is gone). Preserve the
