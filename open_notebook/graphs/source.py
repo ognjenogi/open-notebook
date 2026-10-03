@@ -97,19 +97,50 @@ async def get_stt_model():
 def download_youtube_audio(url: str) -> Optional[str]:
     """Download audio-only track of a YouTube video to a temp file.
 
-    Returns the file path, or None when the download fails. Callers unlink.
+    Tries yt-dlp (Android client, best bot resistance) then pytubefix.
+    Returns the file path, or None when all downloaders fail. Callers unlink.
     """
     try:
         import tempfile
 
-        from pytubefix import YouTube
-
-        yt = YouTube(url)
-        stream = yt.streams.filter(only_audio=True).order_by("abr").desc().first()
-        if stream is None:
-            return None
         tmpdir = tempfile.mkdtemp(prefix="onb-yt-")
-        return stream.download(output_path=tmpdir, filename="audio.mp4")
+        out = f"{tmpdir}/audio.%(ext)s"
+        try:
+            from yt_dlp import YoutubeDL
+
+            for client in ("android", "web"):
+                try:
+                    with YoutubeDL(
+                        {
+                            "format": "bestaudio/best",
+                            "outtmpl": out,
+                            "quiet": True,
+                            "no_warnings": True,
+                            "extractor_args": {"youtube": {"player_client": [client]}},
+                        }
+                    ) as ydl:
+                        ydl.download([url])
+                    import glob as _glob
+
+                    files = _glob.glob(f"{tmpdir}/audio.*")
+                    if files:
+                        return files[0]
+                except Exception as e:
+                    logger.warning(
+                        f"YouTube audio download via yt-dlp/{client} failed: {e}"
+                    )
+        except ImportError:
+            pass
+        try:
+            from pytubefix import YouTube
+
+            yt = YouTube(url)
+            stream = yt.streams.filter(only_audio=True).order_by("abr").desc().first()
+            if stream is not None:
+                return stream.download(output_path=tmpdir, filename="audio.mp4")
+        except Exception as e:
+            logger.warning(f"YouTube audio download via pytubefix failed: {e}")
+        return None
     except Exception as e:
         logger.warning(f"YouTube audio download failed for {url}: {e}")
         return None
