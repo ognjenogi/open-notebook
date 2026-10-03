@@ -704,7 +704,7 @@ async def _fetch_openai_compatible_models(
                     )
     except httpx.HTTPStatusError as e:
         logger.warning(
-            f"Failed to discover openai_compatible models from {base_url}: HTTP {e.response.status_code}"
+f"Failed to discover openai_compatible models from {base_url}: HTTP {e.response.status_code}"
         )
     except Exception as e:
         logger.warning(f"Failed to discover openai_compatible models from {base_url}: {e}")
@@ -775,7 +775,9 @@ async def discover_anthropic_compatible_models() -> List[DiscoveredModel]:
             api_key = config.get("api_key")
             base_url = config.get("base_url", "")
     except Exception as e:
-        logger.warning(f"Failed to read anthropic_compatible config from Credential: {e}")
+        logger.warning(
+            f"Failed to read anthropic_compatible config from Credential: {e}"
+        )
 
     if not api_key:
         api_key = os.environ.get("ANTHROPIC_COMPATIBLE_API_KEY")

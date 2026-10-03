@@ -155,3 +155,7 @@ docker-compose.override.yml
 screenshot-*.png
 history.txt
 .venv-test/
+
+# oss-maintainer local state
+.maintainer/profile.local.toml
+.maintainer/state/
