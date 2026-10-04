@@ -146,6 +146,28 @@ def download_youtube_audio(url: str) -> Optional[str]:
         return None
 
 
+async def transcribe_youtube_audio(url: str) -> Optional[str]:
+    """Best-effort YouTube audio transcription. Returns text or None."""
+    stt = await get_stt_model()
+    if stt is None:
+        return None
+    path = await _run_blocking(download_youtube_audio, url)
+    if not path:
+        return None
+    try:
+        result = await stt.atranscribe(path)
+        text = (getattr(result, "text", "") or "").strip()
+        return text or None
+    except Exception as e:
+        logger.warning(f"YouTube audio transcription failed for {url}: {e}")
+        return None
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
 async def content_process(state: SourceState) -> dict:
     content_state: Dict[str, Any] = state["content_state"]
 
@@ -264,28 +286,6 @@ async def content_process(state: SourceState) -> dict:
             "Could not extract any text content from this source. "
             "The content may be empty, inaccessible, or in an unsupported format."
         )
-
-
-async def transcribe_youtube_audio(url: str) -> Optional[str]:
-    """Best-effort YouTube audio transcription. Returns text or None."""
-    stt = await get_stt_model()
-    if stt is None:
-        return None
-    path = await _run_blocking(download_youtube_audio, url)
-    if not path:
-        return None
-    try:
-        result = await stt.atranscribe(path)
-        text = (getattr(result, "text", "") or "").strip()
-        return text or None
-    except Exception as e:
-        logger.warning(f"YouTube audio transcription failed for {url}: {e}")
-        return None
-    finally:
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
 
     # content-core 2.x no longer deletes the uploaded source file after
     # extraction (the delete_source flag it used to honor is gone). Preserve the

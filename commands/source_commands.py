@@ -13,6 +13,7 @@ from open_notebook.exceptions import (
     ContextLengthExceededError,
     IncompleteGenerationError,
     InvalidInputError,
+    NotFoundError,
 )
 
 try:
@@ -53,6 +54,9 @@ class SourceProcessingOutput(CommandOutput):
             ConfigurationError,
             ContextLengthExceededError,
             IncompleteGenerationError,
+            InvalidInputError,
+            KeyError,
+            NotFoundError,
         ],  # Don't retry validation/config errors or incomplete generations
         "retry_log_level": "debug",  # Avoid log noise during transaction conflicts
     },
@@ -193,6 +197,8 @@ class RunTransformationOutput(CommandOutput):
             ContextLengthExceededError,
             IncompleteGenerationError,
             InvalidInputError,
+            KeyError,
+            NotFoundError,
         ],  # Don't retry validation/config errors or incomplete generations
         "retry_log_level": "warning",
     },
