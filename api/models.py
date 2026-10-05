@@ -74,6 +74,12 @@ class NotebookScopeMixin(BaseModel):
 
 
 class SearchRequest(NotebookScopeMixin):
+    # extra="forbid": unknown fields used to be silently dropped, so callers
+    # posting `search_type` (a field that does not exist) unknowingly ran the
+    # default text search and misread the result as a broken vector search
+    # (B-06, 2026-10-05b audit). Fail loudly instead.
+    model_config = ConfigDict(extra="forbid")
+
     query: str = Field(..., description="Search query")
     type: Literal["text", "vector"] = Field("text", description="Search type")
     limit: int = Field(100, description="Maximum number of results", ge=1, le=1000)

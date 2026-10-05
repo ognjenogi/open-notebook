@@ -44,6 +44,27 @@ class TestSearchLimitValidation:
         mock_text_search.assert_awaited_once()
 
 
+class TestSearchUnknownFieldsRejected:
+    """Unknown fields must 422, not be silently dropped (B-06): a caller
+    posting `search_type` used to unknowingly run a text search and misread
+    the result as a broken vector search."""
+
+    def test_unknown_search_type_field_returns_422(self, client):
+        response = client.post(
+            "/api/search",
+            json={"query": "x", "type": "text", "search_type": "vector"},
+        )
+        assert response.status_code == 422
+        assert "search_type" in response.text
+
+    def test_unknown_random_field_returns_422(self, client):
+        response = client.post(
+            "/api/search",
+            json={"query": "x", "type": "text", "mode": "fast"},
+        )
+        assert response.status_code == 422
+
+
 class TestTextSearchHighlightOverflowFallback:
     """text_search() must fall back to vector search on a highlight position overflow (#648)."""
 
