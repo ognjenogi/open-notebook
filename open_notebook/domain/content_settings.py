@@ -45,3 +45,7 @@ class ContentSettings(RecordModel):
         ["en", "pt", "es", "de", "nl", "en-GB", "fr", "hi", "ja", "zh-CN", "zh-TW"],
         description="Preferred languages for YouTube transcripts",
     )
+    video_vision: Optional[bool] = Field(
+        True,
+        description="Watch video frames with a vision model and merge visual notes into the transcript.",
+    )
