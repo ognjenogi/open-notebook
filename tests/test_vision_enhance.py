@@ -144,6 +144,113 @@ async def test_vision_disabled_by_setting():
 
 
 @pytest.mark.asyncio
+async def test_vision_runs_for_upload_with_video_extension():
+    ffprobe = MagicMock(return_value=60.0)
+    describe = AsyncMock(return_value="visual notes")
+    with (
+        patch(
+            "open_notebook.graphs.source.extract_content",
+            new=AsyncMock(
+                return_value=_transcript_extraction("upload transcript here")
+            ),
+        ),
+        patch(
+            "open_notebook.graphs.source.vision_available",
+            return_value=True,
+        ),
+        patch(
+            "open_notebook.graphs.source.ffprobe_duration",
+            ffprobe,
+        ),
+        patch(
+            "open_notebook.graphs.source.extract_frames",
+            return_value=[(0.0, "f1.jpg")],
+        ),
+        patch(
+            "open_notebook.graphs.source.describe_segment",
+            describe,
+        ),
+        patch("os.unlink", return_value=None),
+    ):
+        out = await content_process(
+            {"content_state": {"file_path": "/uploads/vid.mp4"}}
+        )
+    assert "upload transcript here" in out["extraction"].content
+    assert "## Visual detail (from video frames)" in out["extraction"].content
+    assert "visual notes" in out["extraction"].content
+    describe.assert_awaited_once()
+    # Fast path: extension match skips the resolution probe; the single call
+    # is vision_enhance's duration lookup.
+    assert ffprobe.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_vision_runs_for_extensionless_upload_probed_by_ffprobe():
+    describe = AsyncMock(return_value="visual notes")
+    with (
+        patch(
+            "open_notebook.graphs.source.extract_content",
+            new=AsyncMock(
+                return_value=_transcript_extraction("upload transcript here")
+            ),
+        ),
+        patch(
+            "open_notebook.graphs.source.vision_available",
+            return_value=True,
+        ),
+        patch(
+            "open_notebook.graphs.source.ffprobe_duration",
+            return_value=60.0,
+        ),
+        patch(
+            "open_notebook.graphs.source.extract_frames",
+            return_value=[(0.0, "f1.jpg")],
+        ),
+        patch(
+            "open_notebook.graphs.source.describe_segment",
+            describe,
+        ),
+        patch("os.unlink", return_value=None),
+    ):
+        out = await content_process(
+            {"content_state": {"file_path": "/uploads/noextfile"}}
+        )
+    assert "## Visual detail (from video frames)" in out["extraction"].content
+    assert "visual notes" in out["extraction"].content
+    describe.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_vision_skipped_when_ffprobe_probe_fails():
+    describe = AsyncMock(return_value="visual notes")
+    with (
+        patch(
+            "open_notebook.graphs.source.extract_content",
+            new=AsyncMock(
+                return_value=_transcript_extraction("upload transcript here")
+            ),
+        ),
+        patch(
+            "open_notebook.graphs.source.vision_available",
+            return_value=True,
+        ),
+        patch(
+            "open_notebook.graphs.source.ffprobe_duration",
+            MagicMock(side_effect=RuntimeError("not media")),
+        ),
+        patch(
+            "open_notebook.graphs.source.describe_segment",
+            describe,
+        ),
+    ):
+        out = await content_process(
+            {"content_state": {"file_path": "/uploads/document.pdf"}}
+        )
+    assert out["extraction"].content == "upload transcript here"
+    describe.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_vision_skipped_when_unavailable():
     download = MagicMock(return_value="/tmp/fake.mp4")
     describe = AsyncMock(return_value="A diagram of X")

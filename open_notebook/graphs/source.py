@@ -1,6 +1,7 @@
 import asyncio
 import operator
 import os
+import shutil
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 
 from content_core import ContentCoreConfig, extract_content
@@ -247,6 +248,22 @@ def _looks_like_video(path: str) -> bool:
     return os.path.splitext(path)[1].lower() in _VIDEO_EXTENSIONS
 
 
+async def _resolve_upload_video(file_path: str) -> Optional[str]:
+    """Return ``file_path`` when it is a video, else None. Never raises.
+
+    Extension allowlist is the fast path; anything else is probed with
+    ffprobe (an audio-only or non-media file probes fine or fails closed —
+    vision_enhance still degrades to transcript-only downstream).
+    """
+    if _looks_like_video(file_path):
+        return file_path
+    try:
+        await _run_blocking(ffprobe_duration, file_path)
+        return file_path
+    except Exception:
+        return None
+
+
 def _cleanup_frames(frames: List[Tuple[float, str]]) -> None:
     seen_dirs = set()
     for _, jpeg_path in frames:
@@ -433,15 +450,15 @@ async def content_process(state: SourceState) -> dict:
             )
 
     # Vision pass: watch video frames with a dedicated vision model and merge
-    # the visual notes into the transcript. Never raises — any failure keeps
-    # the transcript-only source.
-    if video_vision and vision_available():
-        video_path: Optional[str] = None
-        temp_video = False
-        try:
+    # the visual notes into the transcript. Never raises — any failure,
+    # including a raising gate, keeps the transcript-only source.
+    video_path: Optional[str] = None
+    temp_video = False
+    try:
+        if video_vision and vision_available():
             file_path = content_state.get("file_path")
-            if file_path and _looks_like_video(file_path):
-                video_path = file_path
+            if file_path:
+                video_path = await _resolve_upload_video(file_path)
             else:
                 url = content_state.get("url") or ""
                 if url and ("youtube.com" in url or "youtu.be" in url):
@@ -455,16 +472,15 @@ async def content_process(state: SourceState) -> dict:
                         content=merge_transcript_with_visual(processed.content, visual),
                         metadata=dict(processed.metadata or {}),
                     )
-        except Exception:
-            logger.warning(
-                "vision pass failed; source kept transcript-only", exc_info=True
-            )
-        finally:
-            if temp_video and video_path:
-                try:
-                    os.unlink(video_path)
-                except OSError:
-                    pass
+    except Exception:
+        logger.warning("vision pass failed; source kept transcript-only", exc_info=True)
+    finally:
+        if temp_video and video_path:
+            try:
+                os.unlink(video_path)
+            except OSError:
+                pass
+            shutil.rmtree(os.path.dirname(video_path), ignore_errors=True)
 
     # content-core 2.x no longer deletes the uploaded source file after
     # extraction (the delete_source flag it used to honor is gone). Preserve the
