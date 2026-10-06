@@ -1,7 +1,7 @@
 import asyncio
 import operator
 import os
-from typing import Any, Callable, Dict, List, Optional, TypeVar
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 
 from content_core import ContentCoreConfig, extract_content
 from content_core.common import ExtractionOutput
@@ -12,11 +12,14 @@ from loguru import logger
 from typing_extensions import Annotated, TypedDict
 
 from open_notebook.ai.models import Model, ModelManager
+from open_notebook.ai.vision import describe_segment, vision_available
 from open_notebook.domain.content_settings import ContentSettings
 from open_notebook.domain.notebook import Asset, Source
 from open_notebook.domain.transformation import Transformation
+from open_notebook.domain.video_vision import merge_transcript_with_visual
 from open_notebook.graphs.transformation import graph as transform_graph
 from open_notebook.utils.runtime_capabilities import engine_runtime_missing
+from open_notebook.utils.video_frames import extract_frames, ffprobe_duration
 
 # Default preferred languages for YouTube transcript selection, used when
 # ContentSettings.youtube_preferred_languages is unset. content-core's own
@@ -168,6 +171,145 @@ async def transcribe_youtube_audio(url: str) -> Optional[str]:
             pass
 
 
+def download_youtube_video(url: str) -> Optional[str]:
+    """Download a YouTube video (<=720p mp4) to a temp file.
+
+    Tries yt-dlp (Android client, best bot resistance) then pytubefix.
+    Returns the file path, or None when all downloaders fail. Callers unlink.
+    """
+    try:
+        import tempfile
+
+        tmpdir = tempfile.mkdtemp(prefix="onb-ytv-")
+        out = f"{tmpdir}/video.%(ext)s"
+        try:
+            from yt_dlp import YoutubeDL
+
+            for client in ("android", "web"):
+                try:
+                    with YoutubeDL(
+                        {
+                            "format": "best[height<=720][ext=mp4]/best[height<=720]/best",
+                            "outtmpl": out,
+                            "quiet": True,
+                            "no_warnings": True,
+                            "extractor_args": {"youtube": {"player_client": [client]}},
+                        }
+                    ) as ydl:
+                        ydl.download([url])
+                    import glob as _glob
+
+                    files = _glob.glob(f"{tmpdir}/video.*")
+                    if files:
+                        return files[0]
+                except Exception as e:
+                    logger.warning(
+                        f"YouTube video download via yt-dlp/{client} failed: {e}"
+                    )
+        except ImportError:
+            pass
+        try:
+            from pytubefix import YouTube
+
+            yt = YouTube(url)
+            stream = (
+                yt.streams.filter(progressive=True, file_extension="mp4")
+                .order_by("resolution")
+                .desc()
+                .first()
+            )
+            if stream is not None:
+                return stream.download(output_path=tmpdir, filename="video.mp4")
+        except Exception as e:
+            logger.warning(f"YouTube video download via pytubefix failed: {e}")
+        return None
+    except Exception as e:
+        logger.warning(f"YouTube video download failed for {url}: {e}")
+        return None
+
+
+_VIDEO_EXTENSIONS = {
+    ".mp4",
+    ".mkv",
+    ".avi",
+    ".mov",
+    ".webm",
+    ".m4v",
+    ".ogv",
+    ".mpg",
+    ".mpeg",
+}
+
+VISION_SEGMENT_SIZE = 6
+
+
+def _looks_like_video(path: str) -> bool:
+    return os.path.splitext(path)[1].lower() in _VIDEO_EXTENSIONS
+
+
+def _cleanup_frames(frames: List[Tuple[float, str]]) -> None:
+    seen_dirs = set()
+    for _, jpeg_path in frames:
+        try:
+            os.unlink(jpeg_path)
+        except OSError:
+            pass
+        seen_dirs.add(os.path.dirname(jpeg_path))
+    for tmpdir in seen_dirs:
+        try:
+            os.rmdir(tmpdir)
+        except OSError:
+            pass
+
+
+async def vision_enhance(video_path: str, transcript: str) -> Optional[str]:
+    """Describe video frames per segment and return markdown notes, or None.
+
+    Frames are grouped into segments of 6; each segment gets a transcript
+    excerpt sliced by proportional character offset and a duration hint.
+    Never raises: any failure is logged and yields None (transcript-only).
+    """
+    try:
+        frames = await _run_blocking(extract_frames, video_path)
+        if not frames:
+            return None
+        try:
+            duration = await _run_blocking(ffprobe_duration, video_path)
+        except Exception:
+            duration = frames[-1][0] + 10.0
+        if duration <= 0:
+            duration = frames[-1][0] + 10.0 or 10.0
+        try:
+            segments = [
+                frames[i : i + VISION_SEGMENT_SIZE]
+                for i in range(0, len(frames), VISION_SEGMENT_SIZE)
+            ]
+            total = len(transcript)
+            parts: List[str] = []
+            for index, segment in enumerate(segments):
+                seg_start = segment[0][0]
+                if index + 1 < len(segments):
+                    seg_end = segments[index + 1][0][0]
+                else:
+                    seg_end = duration
+                excerpt = transcript[
+                    round(total * seg_start / duration) : round(
+                        total * seg_end / duration
+                    )
+                ]
+                duration_hint = f"{seg_start:.0f}s-{seg_end:.0f}s of {duration:.0f}s"
+                description = await describe_segment(
+                    list(segment), excerpt, duration_hint
+                )
+                parts.append(f"### {seg_start:.0f}s\n\n{description}")
+            return "\n\n".join(parts) or None
+        finally:
+            _cleanup_frames(frames)
+    except Exception as e:
+        logger.warning(f"Vision pass failed for {video_path}: {e}")
+        return None
+
+
 async def content_process(state: SourceState) -> dict:
     content_state: Dict[str, Any] = state["content_state"]
 
@@ -181,6 +323,7 @@ async def content_process(state: SourceState) -> dict:
     # accepts "auto"/"simple"/"firecrawl"/"jina"/"crawl4ai" for URLs and
     # "auto"/"docling"/"simple" for documents; falling back to "auto" keeps the
     # previous behavior when settings are unset.
+    video_vision = True
     try:
         settings: ContentSettings = await ContentSettings.get_instance()  # type: ignore[assignment]
         if settings.youtube_preferred_languages:
@@ -199,6 +342,8 @@ async def content_process(state: SourceState) -> dict:
             config_kwargs["docling_formulas"] = settings.docling_formulas
         if settings.docling_vision is not None:
             config_kwargs["docling_vision"] = settings.docling_vision
+        if settings.video_vision is not None:
+            video_vision = settings.video_vision
     except Exception as e:
         # Keep the server-side traceback for diagnosing DB/deserialization
         # failures while still falling back to defaults (non-fatal).
@@ -269,23 +414,57 @@ async def content_process(state: SourceState) -> dict:
             # of failing. The configured default STT carries credentials.
             transcript = await transcribe_youtube_audio(url)
             if transcript:
-                return {
-                    "extraction": ExtractionOutput(
-                        title=processed.title or url,
-                        content=transcript,
+                processed = ExtractionOutput(
+                    title=processed.title or url,
+                    content=transcript,
+                    metadata=dict(processed.metadata or {}),
+                )
+            else:
+                raise ValueError(
+                    "Could not extract content from this YouTube video. "
+                    "No transcript or subtitles are available and audio "
+                    "transcription failed. Try configuring a Speech-to-Text "
+                    "model in Settings to transcribe the audio instead."
+                )
+        else:
+            raise ValueError(
+                "Could not extract any text content from this source. "
+                "The content may be empty, inaccessible, or in an unsupported format."
+            )
+
+    # Vision pass: watch video frames with a dedicated vision model and merge
+    # the visual notes into the transcript. Never raises — any failure keeps
+    # the transcript-only source.
+    if video_vision and vision_available():
+        video_path: Optional[str] = None
+        temp_video = False
+        try:
+            file_path = content_state.get("file_path")
+            if file_path and _looks_like_video(file_path):
+                video_path = file_path
+            else:
+                url = content_state.get("url") or ""
+                if url and ("youtube.com" in url or "youtu.be" in url):
+                    video_path = await _run_blocking(download_youtube_video, url)
+                    temp_video = video_path is not None
+            if video_path:
+                visual = await vision_enhance(video_path, processed.content)
+                if visual:
+                    processed = ExtractionOutput(
+                        title=processed.title,
+                        content=merge_transcript_with_visual(processed.content, visual),
                         metadata=dict(processed.metadata or {}),
                     )
-                }
-            raise ValueError(
-                "Could not extract content from this YouTube video. "
-                "No transcript or subtitles are available and audio "
-                "transcription failed. Try configuring a Speech-to-Text "
-                "model in Settings to transcribe the audio instead."
+        except Exception:
+            logger.warning(
+                "vision pass failed; source kept transcript-only", exc_info=True
             )
-        raise ValueError(
-            "Could not extract any text content from this source. "
-            "The content may be empty, inaccessible, or in an unsupported format."
-        )
+        finally:
+            if temp_video and video_path:
+                try:
+                    os.unlink(video_path)
+                except OSError:
+                    pass
 
     # content-core 2.x no longer deletes the uploaded source file after
     # extraction (the delete_source flag it used to honor is gone). Preserve the
