@@ -2,6 +2,7 @@ import asyncio
 import operator
 import os
 import shutil
+import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 
 from content_core import ContentCoreConfig, extract_content
@@ -14,6 +15,7 @@ from typing_extensions import Annotated, TypedDict
 
 from open_notebook.ai.models import Model, ModelManager
 from open_notebook.ai.vision import describe_segment, vision_available
+from open_notebook.config import UPLOADS_FOLDER
 from open_notebook.domain.content_settings import ContentSettings
 from open_notebook.domain.notebook import Asset, Source
 from open_notebook.domain.transformation import Transformation
@@ -243,6 +245,27 @@ _VIDEO_EXTENSIONS = {
 
 VISION_SEGMENT_SIZE = 6
 
+# Maximum persisted frames per video (first frame of each segment).
+MAX_PERSISTED_FRAMES = 6
+
+# Public URL root for persisted frames (served by the StaticFiles mount in
+# api/main.py). The engine rewrites these to its /api/notebook-asset proxy.
+FRAME_URL_ROOT = "/assets/uploads"
+
+
+def _persist_segment_frame(jpeg_path: str, start: float) -> Optional[str]:
+    """Copy a segment's first frame into UPLOADS_FOLDER; return its public
+    URL, or None when anything goes wrong (frames are best-effort)."""
+    try:
+        name = f"{uuid.uuid4().hex[:12]}-frame{int(start)}s.jpg"
+        dest = os.path.join(UPLOADS_FOLDER, name)
+        os.makedirs(UPLOADS_FOLDER, exist_ok=True)
+        shutil.copy(jpeg_path, dest)
+        return f"{FRAME_URL_ROOT}/{name}"
+    except Exception as e:
+        logger.warning(f"Frame persistence failed for {jpeg_path}: {e}")
+        return None
+
 
 def _looks_like_video(path: str) -> bool:
     return os.path.splitext(path)[1].lower() in _VIDEO_EXTENSIONS
@@ -303,6 +326,7 @@ async def vision_enhance(video_path: str, transcript: str) -> Optional[str]:
             ]
             total = len(transcript)
             parts: List[str] = []
+            persisted = 0
             for index, segment in enumerate(segments):
                 seg_start = segment[0][0]
                 if index + 1 < len(segments):
@@ -318,7 +342,17 @@ async def vision_enhance(video_path: str, transcript: str) -> Optional[str]:
                 description = await describe_segment(
                     list(segment), excerpt, duration_hint
                 )
-                parts.append(f"### {seg_start:.0f}s\n\n{description}")
+                frame_url: Optional[str] = None
+                if persisted < MAX_PERSISTED_FRAMES:
+                    frame_url = _persist_segment_frame(segment[0][1], seg_start)
+                    if frame_url is not None:
+                        persisted += 1
+                if frame_url is not None:
+                    parts.append(
+                        f"### {seg_start:.0f}s\n\n![frame @ {seg_start:.0f}s]({frame_url})\n\n{description}"
+                    )
+                else:
+                    parts.append(f"### {seg_start:.0f}s\n\n{description}")
             return "\n\n".join(parts) or None
         finally:
             _cleanup_frames(frames)
