@@ -276,3 +276,46 @@ async def test_vision_skipped_when_unavailable():
     assert out["extraction"].content == "plain transcript here"
     download.assert_not_called()
     describe.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_vision_persists_frames_and_embeds_urls(tmp_path):
+    import os as _os
+
+    from open_notebook.graphs.source import vision_enhance
+
+    frame_dir = tmp_path / "frames"
+    frame_dir.mkdir()
+    f1 = frame_dir / "frame0.jpg"
+    f1.write_bytes(b"\xff\xd8fake-frame-one")
+    f2 = frame_dir / "frame5.jpg"
+    f2.write_bytes(b"\xff\xd8fake-frame-two")
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    with (
+        patch(
+            "open_notebook.graphs.source.extract_frames",
+            return_value=[(0.0, str(f1)), (10.0, str(f2))],
+        ),
+        patch(
+            "open_notebook.graphs.source.ffprobe_duration",
+            return_value=20.0,
+        ),
+        patch(
+            "open_notebook.graphs.source.describe_segment",
+            new=AsyncMock(return_value="A diagram of X"),
+        ),
+        patch("open_notebook.graphs.source.UPLOADS_FOLDER", str(uploads)),
+    ):
+        md = await vision_enhance("/tmp/fake.mp4", "hello transcript")
+    assert md is not None
+    assert "![frame" in md
+    assert "/assets/uploads/" in md
+    assert "A diagram of X" in md
+    # First frame of the single segment persisted; second frame not kept.
+    persisted = list(uploads.glob("*.jpg"))
+    assert len(persisted) == 1
+    assert persisted[0].read_bytes() == b"\xff\xd8fake-frame-one"
+    # Tempdir still cleaned despite the persistence copy.
+    assert not _os.path.exists(str(f1))
+    assert not _os.path.exists(str(f2))
