@@ -2,6 +2,8 @@ import asyncio
 import operator
 import os
 import shutil
+import subprocess
+import tempfile
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 
@@ -243,6 +245,87 @@ _VIDEO_EXTENSIONS = {
     ".mpeg",
 }
 
+_AUDIO_EXTENSIONS = {
+    ".mp3",
+    ".wav",
+    ".m4a",
+    ".aac",
+    ".ogg",
+    ".flac",
+    ".wma",
+    ".opus",
+}
+
+
+def _looks_like_audio(path: str) -> bool:
+    return os.path.splitext(path)[1].lower() in _AUDIO_EXTENSIONS
+
+
+def extract_audio_from_media(file_path: str) -> Optional[str]:
+    """Extract an audio track from a media file to a temp mp3 using ffmpeg.
+
+    Returns the path to the temp mp3 file or None if extraction fails / no audio stream.
+    Caller unlinks the temp file and its parent temp dir.
+    """
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext in _AUDIO_EXTENSIONS:
+        return None  # Already audio, transcribe directly
+    tmpdir = tempfile.mkdtemp(prefix="onb-audio-")
+    out = os.path.join(tmpdir, "audio.mp3")
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                file_path,
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-b:a",
+                "64k",
+                out,
+            ],
+            capture_output=True,
+            check=True,
+        )
+        if os.path.exists(out) and os.path.getsize(out) > 0:
+            return out
+    except Exception as e:
+        logger.debug(f"Audio extraction from {file_path} failed or no audio stream: {e}")
+    try:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+    except Exception:
+        pass
+    return None
+
+
+async def transcribe_media_file(file_path: str) -> Optional[str]:
+    """Transcribe an uploaded audio or video file via the configured STT model. Returns text or None."""
+    stt = await get_stt_model()
+    if stt is None:
+        logger.warning(f"No STT model available for media transcription of {file_path}")
+        return None
+    extracted_audio = await _run_blocking(extract_audio_from_media, file_path)
+    target_path = extracted_audio if extracted_audio else file_path
+    try:
+        result = await stt.atranscribe(target_path)
+        text = (getattr(result, "text", "") or "").strip()
+        return text or None
+    except Exception as e:
+        logger.warning(f"Media transcription failed for {file_path}: {e}")
+        return None
+    finally:
+        if extracted_audio:
+            try:
+                os.unlink(extracted_audio)
+                shutil.rmtree(os.path.dirname(extracted_audio), ignore_errors=True)
+            except OSError:
+                pass
+
+
 VISION_SEGMENT_SIZE = 6
 
 # Maximum persisted frames per video (first frame of each segment).
@@ -460,6 +543,7 @@ async def content_process(state: SourceState) -> dict:
 
     if not processed.content or not processed.content.strip():
         url = content_state.get("url") or ""
+        file_path = content_state.get("file_path") or ""
         if url and ("youtube.com" in url or "youtu.be" in url):
             # Captions missing — fall back to audio download + STT instead
             # of failing. The configured default STT carries credentials.
@@ -470,12 +554,40 @@ async def content_process(state: SourceState) -> dict:
                     content=transcript,
                     metadata=dict(processed.metadata or {}),
                 )
+            elif video_vision and vision_available():
+                # Allow video vision fallback if STT failed/unavailable
+                processed = ExtractionOutput(
+                    title=processed.title or url,
+                    content="",
+                    metadata=dict(processed.metadata or {}),
+                )
             else:
                 raise ValueError(
                     "Could not extract content from this YouTube video. "
                     "No transcript or subtitles are available and audio "
                     "transcription failed. Try configuring a Speech-to-Text "
                     "model in Settings to transcribe the audio instead."
+                )
+        elif file_path and (_looks_like_video(file_path) or _looks_like_audio(file_path)):
+            transcript = await transcribe_media_file(file_path)
+            if transcript:
+                processed = ExtractionOutput(
+                    title=processed.title or os.path.basename(file_path),
+                    content=transcript,
+                    metadata=dict(processed.metadata or {}),
+                )
+            elif _looks_like_video(file_path) and video_vision and vision_available():
+                # Vision-only video ingestion: audio is absent or empty, but
+                # video frames will provide visual teaching notes.
+                processed = ExtractionOutput(
+                    title=processed.title or os.path.basename(file_path),
+                    content="",
+                    metadata=dict(processed.metadata or {}),
+                )
+            else:
+                raise ValueError(
+                    f"Could not extract any content from media file {os.path.basename(file_path)}. "
+                    "Audio transcription returned no text and video vision is unavailable."
                 )
         else:
             raise ValueError(
@@ -499,11 +611,16 @@ async def content_process(state: SourceState) -> dict:
                     video_path = await _run_blocking(download_youtube_video, url)
                     temp_video = video_path is not None
             if video_path:
-                visual = await vision_enhance(video_path, processed.content)
+                visual = await vision_enhance(video_path, processed.content or "")
                 if visual:
+                    merged = (
+                        merge_transcript_with_visual(processed.content, visual)
+                        if processed.content and processed.content.strip()
+                        else f"## Visual detail (from video frames)\n\n{visual}"
+                    )
                     processed = ExtractionOutput(
                         title=processed.title,
-                        content=merge_transcript_with_visual(processed.content, visual),
+                        content=merged,
                         metadata=dict(processed.metadata or {}),
                     )
     except Exception:
@@ -515,6 +632,12 @@ async def content_process(state: SourceState) -> dict:
             except OSError:
                 pass
             shutil.rmtree(os.path.dirname(video_path), ignore_errors=True)
+
+    if not processed.content or not processed.content.strip():
+        raise ValueError(
+            "Could not extract any text or visual content from this source. "
+            "The content may be empty, inaccessible, or in an unsupported format."
+        )
 
     # content-core 2.x no longer deletes the uploaded source file after
     # extraction (the delete_source flag it used to honor is gone). Preserve the
