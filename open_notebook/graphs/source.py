@@ -520,12 +520,25 @@ async def content_process(state: SourceState) -> dict:
         f"docling_vision={config_kwargs.get('docling_vision', 'auto')})"
     )
 
-    processed = await extract_content(
-        url=content_state.get("url"),
-        file_path=content_state.get("file_path"),
-        content=content_state.get("content"),
-        config=config,
-    )
+    try:
+        processed = await extract_content(
+            url=content_state.get("url"),
+            file_path=content_state.get("file_path"),
+            content=content_state.get("content"),
+            config=config,
+        )
+    except Exception as e:
+        logger.warning(f"content-core extraction raised: {e}")
+        file_path = content_state.get("file_path") or ""
+        url = content_state.get("url") or ""
+        if file_path or url:
+            processed = ExtractionOutput(
+                title=os.path.basename(file_path) if file_path else url,
+                content="",
+                metadata={},
+            )
+        else:
+            raise
 
     # content-core signals a soft extraction failure (e.g. an unreachable or
     # invalid URL, via the bs4 fallback) by returning title="Error" and content
