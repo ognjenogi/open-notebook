@@ -574,7 +574,7 @@ async def content_process(state: SourceState) -> dict:
             config_kwargs["docling_formulas"] = settings.docling_formulas
         if settings.docling_vision is not None:
             config_kwargs["docling_vision"] = settings.docling_vision
-        if settings.video_vision is not None:
+        if getattr(settings, "video_vision", None) is not None:
             video_vision = settings.video_vision
     except Exception as e:
         # Keep the server-side traceback for diagnosing DB/deserialization
@@ -619,6 +619,7 @@ async def content_process(state: SourceState) -> dict:
     )
 
     url = content_state.get("url") or ""
+    file_path = content_state.get("file_path") or ""
     try:
         processed = await extract_content(
             url=content_state.get("url"),
@@ -626,31 +627,34 @@ async def content_process(state: SourceState) -> dict:
             content=content_state.get("content"),
             config=config,
         )
-    except cc.ContentCoreError as e:
-        file_path = content_state.get("file_path") or ""
-        url = content_state.get("url") or ""
-        if (file_path and (_looks_like_video(file_path) or _looks_like_audio(file_path))) or (url and _is_youtube_url(url)):
-            logger.info(f"content-core extraction raised {type(e).__name__} for media source; trying STT/vision fallback")
+    except cc.NoTranscriptFound as e:
+        stt_model = None
+        try:
+            stt_model = await get_stt_model()
+        except Exception:
+            pass
+        if url and _is_youtube_url(url) and (stt_model or (video_vision and vision_available())):
+            logger.info("content-core raised NoTranscriptFound for YouTube; trying custom STT/vision fallback")
             processed = ExtractionOutput(
-                title=os.path.basename(file_path) if file_path else url,
+                title=url,
                 content="",
                 metadata={},
             )
         else:
-            logger.warning(f"content-core extraction failed ({type(e).__name__}): {e}")
             raise _extraction_error(e, url) from e
-    except Exception as e:
-        logger.warning(f"content-core extraction raised: {e}")
-        file_path = content_state.get("file_path") or ""
-        url = content_state.get("url") or ""
-        if (file_path and (_looks_like_video(file_path) or _looks_like_audio(file_path))) or (url and _is_youtube_url(url)):
+    except cc.UnsupportedTypeException as e:
+        if file_path and (_looks_like_video(file_path) or _looks_like_audio(file_path)):
+            logger.info(f"content-core does not support media format ({e}); trying direct ffmpeg STT/vision")
             processed = ExtractionOutput(
-                title=os.path.basename(file_path) if file_path else url,
+                title=os.path.basename(file_path),
                 content="",
                 metadata={},
             )
         else:
-            raise
+            raise _extraction_error(e, url) from e
+    except cc.ContentCoreError as e:
+        logger.warning(f"content-core extraction failed ({type(e).__name__}): {e}")
+        raise _extraction_error(e, url) from e
 
     # content-core signals a soft extraction failure (e.g. an unreachable or
     # invalid URL, via the bs4 fallback) by returning title="Error" and content

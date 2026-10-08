@@ -36,8 +36,8 @@ describe('AppSidebar', () => {
 
     // With mocked t() returning keys, check for translation key strings
     expect(screen.getByText('common.appName')).toBeDefined()
-    expect(screen.getByText('navigation.sources')).toBeDefined()
-    expect(screen.getByText('navigation.notebooks')).toBeDefined()
+    expect(screen.getAllByText('navigation.sources').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('navigation.notebooks').length).toBeGreaterThan(0)
   })
 
   it('uses consistent spacing for expanded footer actions', () => {

@@ -27,6 +27,19 @@ Object.defineProperty(window, 'matchMedia', {
   })),
 })
 
+// Polyfill localStorage for Node 22+ where globalThis.localStorage is undefined by default
+const store = new Map<string, string>()
+const mockLocalStorage = {
+  getItem: vi.fn((k: string) => store.get(k) ?? null),
+  setItem: vi.fn((k: string, v: string) => { store.set(k, String(v)) }),
+  removeItem: vi.fn((k: string) => { store.delete(k) }),
+  clear: vi.fn(() => { store.clear() }),
+  key: vi.fn((i: number) => Array.from(store.keys())[i] ?? null),
+  get length() { return store.size },
+}
+Object.defineProperty(window, 'localStorage', { value: mockLocalStorage, writable: true, configurable: true })
+Object.defineProperty(globalThis, 'localStorage', { value: mockLocalStorage, writable: true, configurable: true })
+
 // Mock @/lib/hooks/use-translation with standard t() function
 vi.mock('../lib/hooks/use-translation', () => {
   return {

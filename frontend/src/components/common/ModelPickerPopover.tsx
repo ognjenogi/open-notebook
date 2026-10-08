@@ -183,6 +183,7 @@ export function ModelPickerPopover({
             !value && !defaultOption && 'text-muted-foreground',
             className
           )}
+          aria-label={t('common.modelConfiguration') || 'Model Configuration'}
           type="button"
         >
           <div className="flex items-center gap-2 truncate flex-1 min-w-0">
@@ -296,6 +297,7 @@ export function ModelPickerPopover({
           {defaultOption && (
             <button
               type="button"
+              title={t('common.resetToDefault')}
               onClick={() => {
                 onChange(undefined)
                 setOpen(false)

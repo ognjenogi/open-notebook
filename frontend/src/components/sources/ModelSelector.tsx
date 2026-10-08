@@ -56,19 +56,29 @@ export function ModelSelector({
   }, [defaultModel, openRouterCred, credMap, t])
 
   return (
-    <ModelPickerPopover
-      value={currentModel}
-      onChange={(newModel) => onModelChange(newModel)}
-      modelType="language"
-      defaultOption={{
-        label: defaultOptionLabel,
-        modelId: defaults?.default_chat_model || undefined,
-      }}
-      triggerIcon={<Settings2 className="h-3.5 w-3.5 text-muted-foreground" />}
-      disabled={disabled}
-      size="sm"
-      align="end"
-      className="max-w-[280px]"
-    />
+    <div title={t('transformations.overrideModelDesc')} className="inline-flex">
+      <ModelPickerPopover
+        value={currentModel}
+        onChange={(newModel) => onModelChange(newModel)}
+        modelType="language"
+        placeholder={t('common.model')}
+        defaultOption={{
+          label: defaultOptionLabel,
+          modelId: defaults?.default_chat_model || undefined,
+        }}
+        triggerIcon={<Settings2 className="h-3.5 w-3.5 text-muted-foreground" />}
+        disabled={disabled}
+        size="sm"
+        align="end"
+        className="max-w-[280px]"
+      />
+      {currentModel && (
+        <span className="sr-only">
+          {t('transformations.sessionUseReplacement', {
+            name: models?.find((m) => m.id === currentModel)?.name || currentModel,
+          })}
+        </span>
+      )}
+    </div>
   )
 }
