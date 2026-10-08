@@ -615,6 +615,8 @@ SupportedProvider = Literal[
     "dashscope",
     "minimax",
     "novita",
+    "siliconflow",
+    "zai",
     "ppq",
     "cohere",
     "voyage",

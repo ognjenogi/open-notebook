@@ -6,7 +6,9 @@ import subprocess
 import tempfile
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
+from urllib.parse import urlparse
 
+import content_core as cc
 from content_core import ContentCoreConfig, extract_content
 from content_core.common import ExtractionOutput
 from langchain_core.runnables import RunnableConfig
@@ -25,6 +27,11 @@ from open_notebook.domain.video_vision import merge_transcript_with_visual
 from open_notebook.graphs.transformation import graph as transform_graph
 from open_notebook.utils.runtime_capabilities import engine_runtime_missing
 from open_notebook.utils.video_frames import extract_frames, ffprobe_duration
+
+# content-core >= 2.1 disables its own Loguru logging for library consumers.
+# Both the API and the worker import this module before extracting anything,
+# so re-enable it here to keep extraction logs in their output.
+logger.enable("content_core")
 
 # Default preferred languages for YouTube transcript selection, used when
 # ContentSettings.youtube_preferred_languages is unset. content-core's own
@@ -460,6 +467,81 @@ async def vision_enhance(video_path: str, transcript: str) -> Optional[str]:
         return None
 
 
+def _is_youtube_url(url: str) -> bool:
+    """Whether ``url`` points at YouTube (by hostname, not substring)."""
+    host = (urlparse(url).hostname or "").lower()
+    return host in ("youtube.com", "youtu.be") or host.endswith(".youtube.com")
+
+
+_YOUTUBE_NO_TRANSCRIPT_MESSAGE = (
+    "Could not extract content from this YouTube video. "
+    "No transcript or subtitles are available. "
+    "Try configuring a Speech-to-Text model in Settings "
+    "to transcribe the audio instead."
+)
+
+
+def _extraction_error(error: "cc.ContentCoreError", url: str) -> ValueError:
+    """Turn a content-core extraction error into a user-facing permanent failure.
+
+    content-core >= 2.2 raises typed errors instead of returning empty content.
+    They are all treated as permanent (ValueError is in process_source's
+    stop_on): content-core already retries transient failures internally,
+    including NetworkError, and our worker's 15 attempts exist for SurrealDB
+    transaction conflicts, not for re-fetching an unreachable page. A failed
+    source can still be retried from the UI.
+
+    The message is fixed per type: content-core's own text can carry proxy
+    credentials, local paths or configuration details, so it only goes to the
+    worker log (logged by the caller, and kept as the exception's cause).
+    """
+
+    if isinstance(error, cc.NoTranscriptFound):
+        return ValueError(_YOUTUBE_NO_TRANSCRIPT_MESSAGE)
+    # content-core reports a failure of both YouTube transcript paths (e.g.
+    # IpBlocked) as "YouTube transcript extraction failed ..."; other
+    # ExternalServiceErrors on a YouTube URL (speech-to-text provider, fetch
+    # engine) get the generic message below.
+    if (
+        isinstance(error, cc.ExternalServiceError)
+        and url
+        and _is_youtube_url(url)
+        and "youtube transcript" in str(error).lower()
+    ):
+        return ValueError(
+            "YouTube blocked or failed the transcript request. If this keeps "
+            "happening, set CCORE_YOUTUBE_PROXY (a residential proxy) or "
+            "CCORE_YOUTUBE_COOKIES_FILE for the worker."
+        )
+    if isinstance(error, cc.NotFoundError):
+        return ValueError(
+            "The page was not found (it may have been removed or moved). Check the URL."
+        )
+    if isinstance(error, cc.NetworkError):
+        return ValueError(
+            "Could not reach this address (connection, timeout or DNS error). "
+            "Check the URL and try again."
+        )
+    if isinstance(error, cc.InvalidInputError):
+        return ValueError("This URL or input is not valid.")
+    if isinstance(error, cc.UnsupportedTypeException):
+        return ValueError("This file type is not supported.")
+    if isinstance(error, cc.FileOperationError):
+        return ValueError(
+            "The file could not be read. It may be corrupted or in an "
+            "unsupported format."
+        )
+    if isinstance(error, cc.ConfigurationError):
+        return ValueError(
+            "Content extraction is not configured correctly. Check the content "
+            "processing engine and speech-to-text settings; the worker log has "
+            "the details."
+        )
+    if isinstance(error, cc.ExternalServiceError):
+        return ValueError("The content extraction service failed.")
+    return ValueError("Could not extract content from this source.")
+
+
 async def content_process(state: SourceState) -> dict:
     content_state: Dict[str, Any] = state["content_state"]
 
@@ -536,6 +618,7 @@ async def content_process(state: SourceState) -> dict:
         f"docling_vision={config_kwargs.get('docling_vision', 'auto')})"
     )
 
+    url = content_state.get("url") or ""
     try:
         processed = await extract_content(
             url=content_state.get("url"),
@@ -543,11 +626,24 @@ async def content_process(state: SourceState) -> dict:
             content=content_state.get("content"),
             config=config,
         )
+    except cc.ContentCoreError as e:
+        file_path = content_state.get("file_path") or ""
+        url = content_state.get("url") or ""
+        if (file_path and (_looks_like_video(file_path) or _looks_like_audio(file_path))) or (url and _is_youtube_url(url)):
+            logger.info(f"content-core extraction raised {type(e).__name__} for media source; trying STT/vision fallback")
+            processed = ExtractionOutput(
+                title=os.path.basename(file_path) if file_path else url,
+                content="",
+                metadata={},
+            )
+        else:
+            logger.warning(f"content-core extraction failed ({type(e).__name__}): {e}")
+            raise _extraction_error(e, url) from e
     except Exception as e:
         logger.warning(f"content-core extraction raised: {e}")
         file_path = content_state.get("file_path") or ""
         url = content_state.get("url") or ""
-        if file_path or url:
+        if (file_path and (_looks_like_video(file_path) or _looks_like_audio(file_path))) or (url and _is_youtube_url(url)):
             processed = ExtractionOutput(
                 title=os.path.basename(file_path) if file_path else url,
                 content="",
@@ -570,6 +666,8 @@ async def content_process(state: SourceState) -> dict:
             "The URL or file may be unreachable, invalid, or in an unsupported format."
         )
 
+    # Since content-core 2.2, empty content means the source was genuinely
+    # empty; extraction failures raise (handled above).
     if not processed.content or not processed.content.strip():
         url = content_state.get("url") or ""
         file_path = content_state.get("file_path") or ""
@@ -663,6 +761,8 @@ async def content_process(state: SourceState) -> dict:
             shutil.rmtree(os.path.dirname(video_path), ignore_errors=True)
 
     if not processed.content or not processed.content.strip():
+        if url and _is_youtube_url(url):
+            raise ValueError(_YOUTUBE_NO_TRANSCRIPT_MESSAGE)
         raise ValueError(
             "Could not extract any text or visual content from this source. "
             "The content may be empty, inaccessible, or in an unsupported format."

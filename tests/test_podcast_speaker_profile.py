@@ -399,15 +399,13 @@ class TestOrphanedProfileDoesNotPoisonConfig:
         )
 
 
-class TestStaleSpeakerDoesNotPoisonConfig:
-    """A speaker profile with no voice_model (never backfilled) must be
-    dropped from the config instead of failing podcast-creator validation
-    for the whole speakers dict."""
+class TestUnconfiguredSpeakerProfileDoesNotPoisonConfig:
+    """A speaker profile without a voice model (the seeded ones ship that way)
+    must not fail podcast-creator's validation of the whole speakers config
+    when generating with a different, complete profile (#1450)."""
 
     @pytest.mark.asyncio
-    async def test_stale_speaker_dropped_requested_kept(self, tmp_path):
-        from commands.podcast_commands import generate_podcast_command
-
+    async def test_unconfigured_profile_dropped_selected_kept(self, tmp_path):
         episode_profile = EpisodeProfile(
             id="episode_profile:ep1",
             name="Test Episode Profile",
@@ -417,26 +415,41 @@ class TestStaleSpeakerDoesNotPoisonConfig:
             default_briefing="brief",
             num_segments=3,
         )
+        speaker = {
+            "name": "Alex",
+            "voice_id": "v1",
+            "backstory": "b",
+            "personality": "p",
+        }
         speaker_profile = SpeakerProfile(
             id="speaker_profile:sp1",
-            name="Requested Panel",
+            name="Tech Experts",
             voice_model="model:tts",
-            speakers=[{"name": "Alex", "voice_id": "v1", "backstory": "b", "personality": "p"}],
+            speakers=[speaker],
         )
         episode_rows = [
             {
                 "id": "episode_profile:ep1",
                 "name": "Test Episode Profile",
                 "speaker_config": "speaker_profile:sp1",
-                "outline_llm": "model:llm",
-                "transcript_llm": "model:llm",
                 "default_briefing": "brief",
                 "num_segments": 3,
             },
         ]
         speaker_rows = [
-            {"id": "speaker_profile:sp1", "name": "Requested Panel", "voice_model": "model:tts"},
-            {"id": "speaker_profile:sp2", "name": "Stale Panel", "voice_model": None},
+            {
+                "id": "speaker_profile:sp1",
+                "name": "Tech Experts",
+                "voice_model": "model:tts",
+                "speakers": [dict(speaker)],
+            },
+            {
+                # Seeded profile nobody configured yet
+                "id": "speaker_profile:sp2",
+                "name": "business_panel",
+                "voice_model": None,
+                "speakers": [dict(speaker)],
+            },
         ]
 
         async def fake_repo_query(query, *args, **kwargs):
@@ -452,23 +465,51 @@ class TestStaleSpeakerDoesNotPoisonConfig:
         resolved: tuple = ("openai", "model-name", {})
 
         with (
-            patch.object(EpisodeProfile, "get_by_name", new=AsyncMock(return_value=episode_profile)),
-            patch.object(SpeakerProfile, "resolve", new=AsyncMock(return_value=speaker_profile)),
-            patch("open_notebook.podcasts.models._resolve_model_config", new=AsyncMock(return_value=resolved)),
-            patch("commands.podcast_commands._resolve_model_config", new=AsyncMock(return_value=resolved)),
+            patch.object(
+                EpisodeProfile,
+                "get_by_name",
+                new=AsyncMock(return_value=episode_profile),
+            ),
+            patch.object(
+                SpeakerProfile, "resolve", new=AsyncMock(return_value=speaker_profile)
+            ),
+            patch(
+                "open_notebook.podcasts.models._resolve_model_config",
+                new=AsyncMock(return_value=resolved),
+            ),
+            patch(
+                "commands.podcast_commands._resolve_model_config",
+                new=AsyncMock(return_value=resolved),
+            ),
             patch("commands.podcast_commands.repo_query", new=fake_repo_query),
             patch("commands.podcast_commands.configure", new=fake_configure),
             patch(
                 "commands.podcast_commands.create_podcast",
-                new=AsyncMock(return_value={"final_output_file_path": str(tmp_path / "ep-dir" / "out.mp3"), "transcript": {}, "outline": {}}),
+                new=AsyncMock(
+                    return_value={
+                        "final_output_file_path": str(
+                            tmp_path / "episodes" / "ep-dir" / "out.mp3"
+                        ),
+                        "transcript": {},
+                        "outline": {},
+                    }
+                ),
             ),
             patch("open_notebook.podcasts.audio_paths.PODCASTS_FOLDER", str(tmp_path)),
-            patch("commands.podcast_commands.build_episode_output_dir", new=lambda *args: ("ep-dir", tmp_path / "ep-dir")),
+            patch(
+                "commands.podcast_commands.build_episode_output_dir",
+                new=lambda *args: ("ep-dir", tmp_path / "ep-dir"),
+            ),
             patch("open_notebook.podcasts.models.PodcastEpisode.save", new=AsyncMock()),
         ):
             result = await generate_podcast_command(make_input())
 
         assert result.success is True
         speakers_config = configure_calls["speakers_config"]["profiles"]
-        assert "Stale Panel" not in speakers_config
-        assert "Requested Panel" in speakers_config
+        assert "business_panel" not in speakers_config
+        assert speakers_config["Tech Experts"]["tts_provider"] == "openai"
+
+        # The whole config passes podcast-creator's own validation.
+        from podcast_creator.speakers import SpeakerConfig
+
+        SpeakerConfig(profiles=speakers_config)
