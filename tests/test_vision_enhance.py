@@ -319,3 +319,52 @@ async def test_vision_persists_frames_and_embeds_urls(tmp_path):
     # Tempdir still cleaned despite the persistence copy.
     assert not _os.path.exists(str(f1))
     assert not _os.path.exists(str(f2))
+
+
+@pytest.mark.asyncio
+async def test_vision_persists_intermediate_slides_for_dense_segment(tmp_path):
+    from open_notebook.graphs.source import vision_enhance
+
+    frame_dir = tmp_path / "frames"
+    frame_dir.mkdir()
+    f1 = frame_dir / "frame0.jpg"
+    f1.write_bytes(b"\xff\xd8fake-frame-one")
+    f2 = frame_dir / "frame10.jpg"
+    f2.write_bytes(b"\xff\xd8fake-frame-two")
+    f3 = frame_dir / "frame20.jpg"
+    f3.write_bytes(b"\xff\xd8fake-frame-three")
+    f4 = frame_dir / "frame30.jpg"
+    f4.write_bytes(b"\xff\xd8fake-frame-four")
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    with (
+        patch(
+            "open_notebook.graphs.source.extract_frames",
+            return_value=[
+                (0.0, str(f1)),
+                (10.0, str(f2)),
+                (20.0, str(f3)),
+                (30.0, str(f4)),
+            ],
+        ),
+        patch(
+            "open_notebook.graphs.source.ffprobe_duration",
+            return_value=40.0,
+        ),
+        patch(
+            "open_notebook.graphs.source.describe_segment",
+            new=AsyncMock(return_value="Slide 1 definition then Slide 2 proof"),
+        ),
+        patch("open_notebook.graphs.source.UPLOADS_FOLDER", str(uploads)),
+    ):
+        md = await vision_enhance("/tmp/fake.mp4", "dense lecture transcript")
+    assert md is not None
+    assert "Slide 1 definition then Slide 2 proof" in md
+    # Both frame 0 (start slide) and frame 2 (intermediate slide @ 20s) persisted
+    persisted = list(uploads.glob("*.jpg"))
+    assert len(persisted) == 2
+    names = [p.name for p in persisted]
+    assert any("frame0s.jpg" in n for n in names)
+    assert any("frame20s.jpg" in n for n in names)
+    assert "![frame @ 0s]" in md
+    assert "![frame @ 20s]" in md

@@ -328,8 +328,8 @@ async def transcribe_media_file(file_path: str) -> Optional[str]:
 
 VISION_SEGMENT_SIZE = 6
 
-# Maximum persisted frames per video (first frame of each segment).
-MAX_PERSISTED_FRAMES = 6
+# Maximum persisted frames per video (up to 8 key frames across segments).
+MAX_PERSISTED_FRAMES = 8
 
 # Public URL root for persisted frames (served by the StaticFiles mount in
 # api/main.py). The engine rewrites these to its /api/notebook-asset proxy.
@@ -425,14 +425,30 @@ async def vision_enhance(video_path: str, transcript: str) -> Optional[str]:
                 description = await describe_segment(
                     list(segment), excerpt, duration_hint
                 )
-                frame_url: Optional[str] = None
-                if persisted < MAX_PERSISTED_FRAMES:
-                    frame_url = _persist_segment_frame(segment[0][1], seg_start)
-                    if frame_url is not None:
+                persisted_frames: List[Tuple[float, str]] = []
+                # Candidate frame indices within this segment:
+                # Always start with frame 0. If segment has >= 4 frames (typical 6-frame segment),
+                # also sample an intermediate frame (middle or later) so slide-heavy lectures
+                # do not lose intermediate slides.
+                candidates = [0]
+                if len(segment) >= 4:
+                    candidates.append(len(segment) // 2)
+
+                for c_idx in candidates:
+                    if persisted >= MAX_PERSISTED_FRAMES:
+                        break
+                    f_time, f_path = segment[c_idx]
+                    f_url = _persist_segment_frame(f_path, f_time)
+                    if f_url is not None:
+                        persisted_frames.append((f_time, f_url))
                         persisted += 1
-                if frame_url is not None:
+
+                if persisted_frames:
+                    img_md = "\n\n".join(
+                        f"![frame @ {t:.0f}s]({url})" for t, url in persisted_frames
+                    )
                     parts.append(
-                        f"### {seg_start:.0f}s\n\n![frame @ {seg_start:.0f}s]({frame_url})\n\n{description}"
+                        f"### {seg_start:.0f}s\n\n{img_md}\n\n{description}"
                     )
                 else:
                     parts.append(f"### {seg_start:.0f}s\n\n{description}")
