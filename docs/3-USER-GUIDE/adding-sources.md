@@ -59,12 +59,12 @@ Sources are the raw materials of your research. This guide covers how to add dif
 **OCR (scanned PDFs & images):** Text is read off scanned PDFs and image files using OCR. OCR runs through the **Docling** engine, which is **optional** and installed on first startup when you set `OPEN_NOTEBOOK_ENABLE_DOCLING=true`. Once enabled, OCR is on by default; you can turn it off (or force a more accurate extraction engine) in **Settings → Content Processing** — see [Content Processing Engines](content-processing-engines.md).
 
 ### Audio & Video
-- **Audio**: MP3, WAV, M4A, OGG, FLAC (~30 seconds - 3 minutes per hour)
-- **Video**: MP4, AVI, MOV, MKV, WebM (~3-10 minutes per hour)
-- **YouTube**: Direct URL support
+- **Audio**: MP3, WAV, M4A, OGG, FLAC
+- **Video**: MP4, AVI, MOV, MKV, WebM
+- **YouTube**: Direct URL support (captions or audio STT fallback)
 - **Podcasts**: RSS feed URL
 
-**Automatic transcription**: Audio/video is transcribed to text automatically. This requires enabling speech-to-text in settings.
+**Automatic transcription & Multimodal Vision**: Audio tracks are extracted with ffmpeg and transcribed via the configured Speech-to-Text model (e.g., OpenRouter Whisper-1 via `OPENROUTER_API_KEY`). Video files undergo automated frame extraction and multimodal visual analysis (`OPEN_NOTEBOOK_VISION_MODEL`, e.g., `glm-4.6v`), capturing on-screen derivations, slides, diagrams, and figures in LaTeX. For silent or audio-poor educational videos (blackboard lectures, slide demonstrations), vision-only ingestion ensures zero information is lost. Persisted segment frames are served at `/assets/uploads/`.
 
 ### Web Content
 - **Articles**: Blog posts, news articles, Medium
