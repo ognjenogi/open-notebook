@@ -125,3 +125,20 @@ async def test_describe_segment_caps_frames_at_six(vision_env, tmp_path):
     images = [p for p in content if p.get("type") == "image_url"]
     assert len(images) == 6
     assert len(os.environ.get("OPEN_NOTEBOOK_VISION_MODEL", "")) > 0
+
+
+@pytest.mark.asyncio
+async def test_is_vision_available_falls_back_to_env(vision_env):
+    assert await vision.is_vision_available() is True
+
+
+@pytest.mark.asyncio
+async def test_is_vision_available_false_when_unset(monkeypatch):
+    for var in (
+        "OPEN_NOTEBOOK_VISION_MODEL",
+        "OPEN_NOTEBOOK_VISION_BASE_URL",
+        "OPEN_NOTEBOOK_VISION_API_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    assert await vision.is_vision_available() is False
+

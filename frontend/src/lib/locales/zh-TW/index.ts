@@ -896,6 +896,8 @@ export const zhTW = {
     ttsModelDesc: "用於生成播客",
     sttModelLabel: "語音轉文字模型",
     sttModelDesc: "用於音訊轉錄",
+    visionModelLabel: "視覺模型",
+    visionModelDesc: "用於影片幀分析、黑板板書和圖表分析",
     embeddingChangeTitle: "嵌入模型變更",
     embeddingChangeConfirm: "您即將將嵌入模型從 {{from}} 更改為 {{to}}。",
     rebuildRequired: "重要提示：需要重建索引",

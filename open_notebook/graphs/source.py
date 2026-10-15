@@ -18,7 +18,11 @@ from loguru import logger
 from typing_extensions import Annotated, TypedDict
 
 from open_notebook.ai.models import Model, ModelManager
-from open_notebook.ai.vision import describe_segment, vision_available
+from open_notebook.ai.vision import (
+    describe_segment,
+    is_vision_available,
+    vision_available,
+)
 from open_notebook.config import UPLOADS_FOLDER
 from open_notebook.domain.content_settings import ContentSettings
 from open_notebook.domain.notebook import Asset, Source
@@ -633,7 +637,7 @@ async def content_process(state: SourceState) -> dict:
             stt_model = await get_stt_model()
         except Exception:
             pass
-        if url and _is_youtube_url(url) and (stt_model or (video_vision and vision_available())):
+        if url and _is_youtube_url(url) and (stt_model or (video_vision and (await is_vision_available()))):
             logger.info("content-core raised NoTranscriptFound for YouTube; trying custom STT/vision fallback")
             processed = ExtractionOutput(
                 title=url,
@@ -685,7 +689,7 @@ async def content_process(state: SourceState) -> dict:
                     content=transcript,
                     metadata=dict(processed.metadata or {}),
                 )
-            elif video_vision and vision_available():
+            elif video_vision and (await is_vision_available()):
                 # Allow video vision fallback if STT failed/unavailable
                 processed = ExtractionOutput(
                     title=processed.title or url,
@@ -707,7 +711,7 @@ async def content_process(state: SourceState) -> dict:
                     content=transcript,
                     metadata=dict(processed.metadata or {}),
                 )
-            elif _looks_like_video(file_path) and video_vision and vision_available():
+            elif _looks_like_video(file_path) and video_vision and (await is_vision_available()):
                 # Vision-only video ingestion: audio is absent or empty, but
                 # video frames will provide visual teaching notes.
                 processed = ExtractionOutput(
@@ -732,7 +736,7 @@ async def content_process(state: SourceState) -> dict:
     video_path: Optional[str] = None
     temp_video = False
     try:
-        if video_vision and vision_available():
+        if video_vision and (await is_vision_available()):
             file_path = content_state.get("file_path")
             if file_path:
                 video_path = await _resolve_upload_video(file_path)

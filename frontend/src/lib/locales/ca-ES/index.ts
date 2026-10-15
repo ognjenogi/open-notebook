@@ -896,6 +896,8 @@ export const caES = {
     ttsModelDesc: "S'usa per a la generació de podcasts",
     sttModelLabel: "Model de veu a text",
     sttModelDesc: "S'usa per a la transcripció d'àudio",
+    visionModelLabel: "Model de Visió",
+    visionModelDesc: "S'usa per a l'anàlisi de fotogrames de vídeo, fórmules de pissarra i diagrames",
     embeddingChangeTitle: "Canvi de model d'incrustació",
     embeddingChangeConfirm: "Estàs a punt de canviar el model d'incrustació de {{from}} a {{to}}.",
     rebuildRequired: "Important: cal reconstruir",

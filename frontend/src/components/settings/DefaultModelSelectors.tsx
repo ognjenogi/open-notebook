@@ -194,6 +194,14 @@ export function DefaultModelSelectors({ models, defaults }: DefaultModelSelector
       fallsBackToChat: true,
       id: `${generatedId}-large`,
     },
+    {
+      key: 'default_vision_model',
+      label: t('models.visionModelLabel'),
+      description: t('models.visionModelDesc'),
+      modelType: 'language',
+      fallsBackToChat: true,
+      id: `${generatedId}-vision`,
+    },
   ]
 
   const defaultConfigs = [...primaryConfigs, ...advancedConfigs]

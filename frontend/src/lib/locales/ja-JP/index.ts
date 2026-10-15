@@ -896,6 +896,8 @@ export const jaJP = {
     ttsModelDesc: "ポッドキャスト生成に使用",
     sttModelLabel: "音声認識モデル",
     sttModelDesc: "音声の書き起こしに使用",
+    visionModelLabel: "ビジョンモデル",
+    visionModelDesc: "ビデオフレームの分析、黒板の数式、図の読み取りに使用",
     embeddingChangeTitle: "Embeddingモデルの変更",
     embeddingChangeConfirm: "Embeddingモデルを{{from}}から{{to}}に変更しようとしています。",
     rebuildRequired: "重要：再構築が必要",

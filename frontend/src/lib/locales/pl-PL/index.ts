@@ -896,6 +896,8 @@ export const plPL = {
     ttsModelDesc: "Używany do generowania podcastów",
     sttModelLabel: "Model rozpoznawania mowy",
     sttModelDesc: "Używany do transkrypcji audio",
+    visionModelLabel: "Model wizyjny",
+    visionModelDesc: "Używany do analizy klatek wideo, notatek z tablicy i diagramów",
     embeddingChangeTitle: "Zmiana modelu osadzania",
     embeddingChangeConfirm: "Zamierzasz zmienić model osadzania z {{from}} na {{to}}.",
     rebuildRequired: "Ważne: wymagana przebudowa",
